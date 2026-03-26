@@ -1,1 +1,8 @@
 .env
+node_modules
+backups
+backups-for-json-l
+backups-for-invalid-products
+bulk_operation_result.jsonl
+most_recent_invalid_products.json
+products_in_json_form.json

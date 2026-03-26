@@ -1,6 +1,11 @@
+
+
 // Assumes Node.js 18+ for native fetch
 export async function generateShopifyAccessToken() {
-  const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/oauth/access_token`;
+  const url = `https://${process.env.SHOPIFY_STORE}/admin/oauth/access_token`;
+
+    console.log("url", url)
+
 
   const response = await fetch(url, {
     method: 'POST',

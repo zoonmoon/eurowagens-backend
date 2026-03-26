@@ -2,6 +2,7 @@
   "name": "eurowagens-backend",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -15,5 +16,8 @@
     "url": "https://github.com/zoonmoon/eurowagens-backend/issues"
   },
   "homepage": "https://github.com/zoonmoon/eurowagens-backend#readme",
-  "description": ""
+  "description": "",
+  "dependencies": {
+    "dotenv": "^17.3.1"
+  }
 }

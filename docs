@@ -1,0 +1,7 @@
+Docs for bulk operation flow: 
+
+a) Assign a webhook listener to bulk operation accomplish event from:
+
+node register_bulk_op_completion_webhook.js
+
+

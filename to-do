@@ -1,0 +1,3 @@
+In the file "insert_bulk_data_to_file.js", change the code of the function  "insertProductsToFileInJSONform"
+currently all products are stored in one single variable but when there are 200K products, it can 
+blow up the memory 

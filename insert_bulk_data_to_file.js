@@ -5,8 +5,9 @@ import {generateShopifyAccessToken} from './utils/access_token.js'
 // insertProducts.js
 import fs from "fs";
 import readline from "readline";
+import { backupCurrentProductsData } from "./utils/backup-file.js";
 
-export async function insertProductsToDBFromNdjson(inputFilePath) {
+export async function insertProductsToFileInJSONform(inputFilePath) {
   try {
     const rl = readline.createInterface({
       input: fs.createReadStream(inputFilePath),
@@ -24,22 +25,8 @@ export async function insertProductsToDBFromNdjson(inputFilePath) {
         products[obj.id] = {
           id: obj.id,
           tags: obj.tags || [],
-          title: obj.title,
           status: obj.status,
-          handle: obj.handle,
-          featuredImage: obj.featuredImage || null,
-          collections: [],
-          metafields: [],
-          variants: [],
-          wheel_offset: null,
-          wheel_diameter: null,
-          wheel_width: null,
-          wheel_hub_bore: null,
-          tire_rim_diameter: null,
-          aspect_ratio: null,
-          section_width: null,
-          wheel_bolt_patterns: null,
-          price: null, // top-level product price
+          description: obj.description
         };
         continue;
       }
@@ -47,80 +34,28 @@ export async function insertProductsToDBFromNdjson(inputFilePath) {
       if (obj.__parentId && products[obj.__parentId]) {
         const parent = products[obj.__parentId];
 
-        if (obj.id?.startsWith("gid://shopify/Collection/")) {
-          parent.collections.push({ id: obj.id });
-
-        } else if (obj.id?.startsWith("gid://shopify/Metafield/")) {
+        if (obj.id?.startsWith("gid://shopify/Metafield/")) {
 
           let value = obj.value;
           let originalValue = value 
 
-          if(!filters.includes(obj.key) || obj.type == "list.single_line_text_field" ){
-            if(obj.type == "list.single_line_text_field"){
-              let v = JSON.parse(originalValue)
-              if(v.length > 0){
-                v.forEach(vv => {
-                  parent.metafields.push({ key: 'custom-'+ obj.key, value: vv });
-                })
-
-                console.log(parent.metafields)
-
-              }
-            }
-            continue;
-          }
-
-          // Numeric fields in wheels
-          if (['wheel_offset', 'wheel_diameter', 'wheel_width', 'wheel_hub_bore'].includes(obj.key)) {
-            value = parseFloat(obj.value.replace('+', '')) || 0;
-            parent[obj.key] = value;
-          }
-
-          if(obj.key == "wheel_bolt_patterns") {
+          if(obj.key == "oem_number") {
             parent[obj.key] = originalValue;
           }
 
-          // Tire numeric fields
-          if (['tire_rim_diameter', 'aspect_ratio', 'section_width'].includes(obj.key)) {
-            value = parseFloat(obj.value) || 0;
-            parent[obj.key] = value;
-
-
-            const { section_width, aspect_ratio, tire_rim_diameter } = parent;
-            // ✅ if all 3 are present and non-zero, add concatenated tag
-            if (section_width && aspect_ratio && tire_rim_diameter) {
-              parent.tags = [`${section_width}${aspect_ratio}${tire_rim_diameter}`];
-            }
-            
-          }
-          
-          parent.metafields.push({ key: obj.key, value: originalValue });
-          
-        } else if (obj.id?.startsWith("gid://shopify/ProductVariant/")) {
-          const variantPrice = parseFloat(obj.price) || 0;
-          parent.variants.push({
-            id: obj.id,
-            sku: obj.sku,
-            price: variantPrice,
-            compareAtPrice: obj.compareAtPrice,
-          });
-
-          // Update product price: take min of all variants
-          if (parent.price === null || variantPrice < parent.price) {
-            parent.price = variantPrice;
-          }
-        }
+        } 
       }
     }
 
-    const allProducts = Object.values(products);
+    const allProducts = Object.values(products).filter(p => p.status.toLowerCase() == "active");
 
-    for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
-      const batch = allProducts.slice(i, i + BATCH_SIZE);
-      console.log(batch[0]);
-      await insertBatchOfProductsToDB(batch);
-      console.log(`Inserted batch ${i / BATCH_SIZE + 1}`);
-    }
+    backupCurrentProductsData("backups", "products_in_json_form.json");
+    
+    fs.writeFileSync(
+      "products_in_json_form.json",
+      JSON.stringify(allProducts, null, 2),
+      "utf-8"
+    );
 
     console.log("All products inserted successfully.");
 
@@ -176,6 +111,9 @@ async function getShopifyBulkFileUrl() {
 }
 
 async function saveBulkOperationFile(fileUrl) {
+
+  backupCurrentProductsData("backups-for-json-l", "bulk_operation_result.jsonl");
+
   const res = await fetch(fileUrl);
   if (!res.ok) throw new Error(`Failed to download file: ${res.statusText}`);
 
@@ -191,5 +129,5 @@ async function saveBulkOperationFile(fileUrl) {
 export async function initiateInsertData(){
     let fileUrl = await getShopifyBulkFileUrl()
     await saveBulkOperationFile(fileUrl) 
-    await insertProductsToDBFromNdjson(path.join(process.cwd(), "bulk_operation_result.jsonl"))
+    await insertProductsToFileInJSONform(path.join(process.cwd(), "bulk_operation_result.jsonl"))
 }

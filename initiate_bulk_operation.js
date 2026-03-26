@@ -10,7 +10,7 @@ export async function shopifyGraphQL(query, variables = {}) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+        "X-Shopify-Access-Token": accessToken,
       },
       body: JSON.stringify({ query, variables }),
       cache: "no-store", // Next.js App Router: disable caching
@@ -59,62 +59,28 @@ export async function fetchProductsWithCollectionsAndMetafields() {
   
   try{
 
-    // const bulkQuery = `
-    //   {
-    //     products(status:active){
-    //       edges {
-    //         node {
-    //           id
-    //           tags
-    //           description
-    //           # ✅ Product metafields
-    //           metafields(first: 1, namespace:'custom', key:'oem_number') {
-    //             edges {
-    //               node {
-    //                 value
-    //               }
-    //             }
-    //           }
-
-    //           # ✅ First variant with price
-    //           variants(first: 1) {
-    //             edges {
-    //               node {
-    //                 id
-    //                 sku
-    //               }
-    //             }
-    //           }
-    //         }
-    //       }
-    //     }
-    //   }
-    // `;
-
     const bulkQuery = `
       {
-        products(status: active) {
+        products{
           edges {
             node {
               id
+              status
               tags
               description
-              # No 'first' argument, no 'edges/node' wrapper
-              metafields(namespace: "custom", key: "oem_number") {
-                value
-                namespace
-                key
-              }
-              # No 'first' argument, no 'edges/node' wrapper
-              variants {
-                id
-                sku
+              metafields(first: 250) {
+                edges {
+                  node {
+                    id
+                    value
+                  }
+                }
               }
             }
           }
         }
       }
-    `
+    `;
 
     return await startBulkOperation(bulkQuery);
   }catch(err){
