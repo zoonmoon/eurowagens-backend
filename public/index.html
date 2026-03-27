@@ -121,19 +121,26 @@ btn.onclick = async () => {
   btn.disabled = true;
   btn.innerText = "Starting...";
 
+  // ✅ HIDE OLD RESULTS
+  resultsDiv.innerHTML = "";
+  resultsDiv.style.display = "none";
+
   await fetch("/initiate-bulk-operation", { method: "GET" });
 
   fetchStatus();
 };
 
+
 viewBtn.onclick = async () => {
   const res = await fetch("/results");
   const products = await res.json();
 
+  // ✅ SHOW RESULTS AGAIN
+  resultsDiv.style.display = "block";
   resultsDiv.innerHTML = "";
 
   if (!products.length) {
-    resultsDiv.innerHTML = "<h3>No invalid tags found ✅</h3>";
+    resultsDiv.innerHTML = "<h3>No invalid tags found</h3>";
     return;
   }
 
@@ -158,6 +165,7 @@ viewBtn.onclick = async () => {
     resultsDiv.innerHTML += html;
   });
 };
+
 
 // 1 sec polling
 setInterval(fetchStatus, 1000);
