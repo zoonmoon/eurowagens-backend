@@ -83,7 +83,7 @@
 
   <button id="btn">Start Validation</button>
 
-  <div class="status" id="statusText">Idle</div>
+  <div class="status" id="statusText"></div>
 </div>
 
 <!-- 🟢 RECENT RUNS SECTION -->
@@ -133,7 +133,7 @@ async function initializeState() {
       // idle or completed
       btn.disabled = false;
       btn.innerText = "Start Validation";
-      statusText.innerText = "Idle";
+      statusText.innerText = "Completed previous run.";
     }
 
   } catch {
