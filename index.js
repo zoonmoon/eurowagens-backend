@@ -2,11 +2,20 @@ import 'dotenv/config';
 import http from "http";
 import fs from "fs/promises";
 import { parse } from "url";
-
+import cron from "node-cron";
 import { initiateBulkOperationOK } from "./initiate_bulk_operation.js";
 import { initiateInsertData } from "./insert_bulk_data_to_file.js";
 import { validateAndCorrectTags } from "./utils/validate_and_correct_tags.js";
 import { writeStatus } from './utils/write_status.js';
+
+async function isJobRunning() {
+  try {
+    const data = JSON.parse(await fs.readFile("status.json", "utf-8"));
+    return data.status === "running";
+  } catch {
+    return false;
+  }
+}
 
 // Helper to send JSON responses
 function sendJson(res, statusCode, data) {
@@ -66,7 +75,17 @@ const pathname = parsedUrl.pathname;
 
   // ---- GET /initiate-bulk-operation ----
   if (method === "GET" && url === "/initiate-bulk-operation") {
+
     try {
+
+      if (await isJobRunning()) {
+        console.log("Skipping: job already running");
+
+        return sendJson(res, 200, {
+          message: "Job already running, skipped"
+        });
+      }
+
       await fs.writeFile(
         "started_at.json",
         JSON.stringify({ startedAt: new Date().toISOString() }, null, 2)
@@ -188,6 +207,33 @@ const pathname = parsedUrl.pathname;
 });
 
 const PORT = 3000;
+
+
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://0.0.0.0:${PORT}`);
+
+  // ⏰ Cron starts AFTER server is up
+  cron.schedule("0 * * * *", async () => {
+    console.log("Cron triggered...");
+
+    if (await isJobRunning()) {
+      console.log("Skipping: job already running");
+      return;
+    }
+
+    console.log("Running bulk operation every hour...");
+
+    try {
+      await fetch(process.env.SERVER_BASE_URL + "/initiate-bulk-operation");
+    } catch (err) {
+      console.error("Cron failed:", err);
+    }
+  });
+
+
+
+
+
+
 });
