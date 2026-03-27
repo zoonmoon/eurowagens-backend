@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import http from "http";
 import fs from "fs/promises";
+import { parse } from "url";
 
 import { initiateBulkOperationOK } from "./initiate_bulk_operation.js";
 import { initiateInsertData } from "./insert_bulk_data_to_file.js";
@@ -23,8 +24,10 @@ function fireAndForget(url, failMessage, sub_operation) {
 
 const server = http.createServer(async (req, res) => {
   const { method, url } = req;
+const parsedUrl = parse(req.url, true);
+const pathname = parsedUrl.pathname;
 
-  if (method === "GET" && url === "/") {
+  if (method === "GET" && pathname === "/") {
     try {
       const html = await fs.readFile("./public/index.html", "utf-8");
       res.writeHead(200, { "Content-Type": "text/html" });
