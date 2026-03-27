@@ -101,66 +101,19 @@ const viewBtn = document.getElementById("viewResultsBtn");
 const statusText = document.getElementById("statusText");
 const resultsDiv = document.getElementById("results");
 
-const SHOP = "your-store.myshopify.com";
+const SHOP = "eurowagens-com.myshopify.com";
 
 let polling = false;
 
-// ✅ ONLY poll AFTER clicking button
-async function fetchStatus() {
-  if (!polling) return;
-
-  try {
-    const res = await fetch("/status");
-    const data = await res.json();
-
-    if (data.status === "running") {
-      statusText.innerText = data.message || "Processing...";
-    }
-
-    if (data.status === "completed") {
-      statusText.innerText = "Completed ✅";
-      btn.disabled = false;
-      btn.innerText = "Start Validation";
-      polling = false;
-    }
-
-  } catch {
-    statusText.innerText = "Error fetching status";
-    polling = false;
-  }
-}
-
-btn.onclick = async () => {
-  btn.disabled = true;
-  btn.innerText = "Starting...";
-  statusText.innerText = "Starting new run...";
-
-  resultsDiv.innerHTML = "";
-
-  await fetch("/initiate-bulk-operation");
-
-  polling = true;
-
-  // start polling loop
-  const interval = setInterval(() => {
-    if (!polling) {
-      clearInterval(interval);
-      return;
-    }
-    fetchStatus();
-  }, 1000);
-};
-
-
-// 🟢 VIEW RESULTS (separate concern)
-viewBtn.onclick = async () => {
+// 🔁 LOAD RESULTS FUNCTION (reusable)
+async function loadResults(label = "Last Run Results") {
   const res = await fetch("/results");
   const products = await res.json();
 
-  resultsDiv.innerHTML = "";
+  resultsDiv.innerHTML = `<h3>${label}</h3>`;
 
   if (!products.length) {
-    resultsDiv.innerHTML = "<h3>No invalid tags found</h3>";
+    resultsDiv.innerHTML += "<p>No invalid tags found</p>";
     return;
   }
 
@@ -184,8 +137,65 @@ viewBtn.onclick = async () => {
 
     resultsDiv.innerHTML += html;
   });
-};
-</script>
+}
 
+
+// ✅ ONLY poll AFTER clicking button
+async function fetchStatus() {
+  if (!polling) return;
+
+  try {
+    const res = await fetch("/status");
+    const data = await res.json();
+
+    if (data.status === "running") {
+      btn.innerText = "Processing...";
+      statusText.innerText = data.message || "Processing...";
+    }
+
+    if (data.status === "completed") {
+      statusText.innerText = "Completed ✅";
+      btn.disabled = false;
+      btn.innerText = "Start Validation";
+      polling = false;
+
+      // 🔥 AUTO REFRESH RESULTS AFTER COMPLETION
+      loadResults("Last Run Results (Updated)");
+    }
+
+  } catch {
+    statusText.innerText = "Error fetching status";
+    polling = false;
+  }
+}
+
+
+// ▶️ START NEW RUN
+btn.onclick = async () => {
+  btn.disabled = true;
+  btn.innerText = "Starting...";
+  statusText.innerText = "Starting new run...";
+
+  await fetch("/initiate-bulk-operation");
+
+  polling = true;
+
+  const interval = setInterval(() => {
+    if (!polling) {
+      clearInterval(interval);
+      return;
+    }
+    fetchStatus();
+  }, 1000);
+};
+
+
+// 🟢 OPTIONAL: keep manual refresh button
+viewBtn.onclick = () => loadResults("Last Run Results (Manual Refresh)");
+
+
+// 🚀 LOAD RESULTS ON PAGE LOAD
+loadResults();
+</script>
 </body>
 </html>
