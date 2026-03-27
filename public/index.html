@@ -105,6 +105,42 @@ const SHOP = "eurowagens-com.myshopify.com";
 
 let polling = false;
 
+
+async function initializeState() {
+  try {
+    btn.disabled = true;
+
+    const res = await fetch("/status");
+    const data = await res.json();
+
+    if (data.status === "running") {
+      // 🔒 LOCK UI
+      btn.disabled = true;
+      btn.innerText = "Processing...";
+      statusText.innerText = data.message || "Processing...";
+
+      polling = true;
+
+      // 🔁 resume polling
+      const interval = setInterval(() => {
+        if (!polling) {
+          clearInterval(interval);
+          return;
+        }
+        fetchStatus();
+      }, 1000);
+    } else {
+      // idle or completed
+      btn.disabled = false;
+      btn.innerText = "Start Validation";
+      statusText.innerText = "Idle";
+    }
+
+  } catch {
+    statusText.innerText = "Error initializing state";
+  }
+}
+
 // 🔁 LOAD RESULTS FUNCTION (reusable)
 async function loadResults(label = "Last Run Results") {
   const res = await fetch("/results");
@@ -195,7 +231,10 @@ viewBtn.onclick = () => loadResults("Last Run Results (Manual Refresh)");
 
 
 // 🚀 LOAD RESULTS ON PAGE LOAD
+
+initializeState();
 loadResults();
+
 </script>
 </body>
 </html>
