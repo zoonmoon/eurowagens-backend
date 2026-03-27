@@ -86,7 +86,6 @@ export async function validateAndCorrectTags() {
     console.log("Invalid products:", invalidProducts.length);
     console.log("Corrected products:", correctedProducts.length);
 
-    if(invalidProducts.length == 0) return
 
     // ✅ Backup old invalid file (sync → safe)
     backupCurrentProductsData("backups-for-invalid-products", invalidFilePath);
@@ -99,6 +98,8 @@ export async function validateAndCorrectTags() {
     );
 
     console.log("Invalid products saved to file.");
+
+    if(invalidProducts.length == 0) return
 
     updateInvalidTagsInShopify(invalidProducts)
 
