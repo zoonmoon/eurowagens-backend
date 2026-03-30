@@ -9,6 +9,7 @@ export async function convertTagJsonsToCSV(
   let files = [];
     const dirPath = path.resolve(dirName);
 
+
   // ✅ Decide files to process
   if (targetFileName) {
     files = [targetFileName];
@@ -17,17 +18,26 @@ export async function convertTagJsonsToCSV(
     files = dirents.filter(d => d.isFile()).map(d => d.name);
   }
 
+
+  console.log(files)
+
+
   const rows = [];
   const tagKeysSet = new Set();
 
   for (const fileName of files) {
     const filePath = path.join(dirPath, fileName);
 
+
+    console.log(filePath)
+
     try {
       const stat = await fs.stat(filePath);
 
       // ✅ Skip empty arrays
       if (stat.size <= 5) continue;
+
+        console.log("stat.size", stat.size)
 
       const content = await fs.readFile(filePath, "utf-8");
       const json = JSON.parse(content);
@@ -79,4 +89,5 @@ export async function convertTagJsonsToCSV(
   await fs.writeFile(outputFile, csvContent, "utf-8");
 
   console.log("CSV generated:", outputFile);
+
 }

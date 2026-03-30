@@ -269,7 +269,8 @@ style.innerHTML = `
   max-height:80vh;
   overflow-y:auto;
   border-radius:12px;
-  padding:20px;
+  padding:20px; 
+  padding-bottom:0px;
   box-shadow:0 0 30px rgba(0,0,0,0.5);
   color:white;
 }
@@ -278,6 +279,10 @@ style.innerHTML = `
   display:flex;
   justify-content:space-between;
   align-items:center;
+  padding:20px;
+  padding-bottom:0px;
+  position:sticky;
+  top:0px;
 }
 
 .close-btn {
@@ -294,7 +299,10 @@ style.innerHTML = `
   justify-content:space-between;
   align-items:center;
 }
-
+#modalBody{
+  padding:20px;
+  padding-top:0px;
+}
 .download-btn {
   background:#22c55e;
   border:none;
@@ -325,6 +333,7 @@ style.innerHTML = `
 }
 .modal-box{
   border:1px solid white;
+  padding:0;
 }
 
 @keyframes spin {
@@ -396,7 +405,7 @@ viewAllBtn.onclick = async () => {
 
       // 🔥 DOWNLOAD
       item.querySelector("button").onclick = () => {
-        const url = `/download-tag-correction-log?dirName=\${encodeURIComponent(file.directory)}&file_name=${encodeURIComponent(file.name)}`;
+        const url = `/download-tag-correction-log?dirName=${encodeURIComponent(file.directory)}&file_name=${encodeURIComponent(file.name)}`;
         window.open(url, "_blank");
       };
 
