@@ -7,6 +7,9 @@ import { initiateBulkOperationOK } from "./initiate_bulk_operation.js";
 import { initiateInsertData } from "./insert_bulk_data_to_file.js";
 import { validateAndCorrectTags } from "./utils/validate_and_correct_tags.js";
 import { writeStatus } from './utils/write_status.js';
+import { getRecentTagCorrections } from './utils/retrieve_recent_tag_corrrections.js';
+import { convertTagJsonsToCSV } from './utils/convert_to_csv.js';
+import path from "path";
 
 async function isJobRunning() {
   try {
@@ -33,8 +36,48 @@ function fireAndForget(url, failMessage, sub_operation) {
 
 const server = http.createServer(async (req, res) => {
   const { method, url } = req;
-const parsedUrl = parse(req.url, true);
-const pathname = parsedUrl.pathname;
+  const parsedUrl = parse(req.url, true);
+  const pathname = parsedUrl.pathname;
+
+  if (method === "GET" && pathname.includes("download-tag-correction-log")) {
+    try {
+      const { dirName, file_name } = parsedUrl.query;
+
+      if (!dirName || !file_name) {
+        res.writeHead(400);
+        res.end("dirName and file_name are required");
+        return;
+      }
+
+      const outputFile = `temp.csv`;
+
+      // ✅ use your existing function
+      await convertTagJsonsToCSV(dirName, outputFile, file_name);
+
+      const filePath = path.resolve(outputFile);
+
+      const file = await fs.readFile(filePath);
+
+      res.writeHead(200, {
+        "Content-Type": "text/csv",
+        "Content-Disposition": `attachment; filename="${file_name.replace(".json", ".csv")}"`
+      });
+
+      res.end(file);
+
+      // ✅ cleanup temp file (optional but good)
+      await fs.unlink(filePath);
+
+    } catch (err) {
+      console.error(err);
+      res.writeHead(500);
+      res.end("CSV generation failed");
+    }
+
+    return;
+  }
+
+
 
   if (method === "GET" && pathname === "/") {
     try {
@@ -44,6 +87,27 @@ const pathname = parsedUrl.pathname;
     } catch (err) {
       res.writeHead(500);
       res.end("Failed to load UI");
+    }
+    return;
+  }
+
+  if (method === "GET" && pathname.includes('recent-tag-corrections-list')) {
+    try {
+      
+      var dirName = "backups-for-invalid-products"
+
+      const dirPath = path.resolve(dirName);
+      const files = await getRecentTagCorrections(dirPath);
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      
+      res.end(JSON.stringify(files));
+
+    } catch (err) {
+      res.writeHead(500);
+        console.error("ERROR:", err); // 🔥 ADD THIS
+
+      res.end("Failed to load data");
     }
     return;
   }

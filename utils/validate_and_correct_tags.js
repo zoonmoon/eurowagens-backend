@@ -4,6 +4,20 @@ import { backupCurrentProductsData } from "./backup-file.js";
 import { generateShopifyAccessToken } from "./access_token.js";
 
 
+function getCorrectedTags(product) {
+  const originalTags = product.tags || [];
+  const correctedTags = originalTags.map(t => t.toLowerCase());
+
+  const hasInvalidTag = originalTags.some((tag, i) => tag !== correctedTags[i]);
+
+  return {
+    ...product,
+    originalTags,        // ✅ preserve original
+    newTags: correctedTags, // (optional but matches your earlier flow)
+    hasInvalidTag
+  };
+}
+
 export async function updateInvalidTagsInShopify(invalidProducts) {
   try {
     const shopifyAccessToken = await generateShopifyAccessToken();
@@ -12,7 +26,7 @@ export async function updateInvalidTagsInShopify(invalidProducts) {
     const url = `https://${shop}/admin/api/2026-01/graphql.json`;
 
     for (const product of invalidProducts) {
-      const correctedTags = (product.tags || []).map(t => t.toLowerCase());
+      const correctedTags = product.newTags;
 
       const query = `
         mutation productUpdate($input: ProductInput!) {
@@ -74,18 +88,20 @@ export async function validateAndCorrectTags() {
     const correctedProducts = [];
 
     for (const product of products) {
-      const tags = product.tags || [];
 
-      const hasInvalidTag = tags.some(tag => tag !== tag.toLowerCase());
+      const result = getCorrectedTags(product);
 
-      if (hasInvalidTag) {
-        invalidProducts.push(product);
+      if (result.hasInvalidTag) {
+        invalidProducts.push(result);
       }
+
+
     }
 
     console.log("Invalid products:", invalidProducts.length);
     console.log("Corrected products:", correctedProducts.length);
 
+    if(invalidProducts.length == 0) return
 
     // ✅ Backup old invalid file (sync → safe)
     backupCurrentProductsData("backups-for-invalid-products", invalidFilePath);
@@ -99,9 +115,8 @@ export async function validateAndCorrectTags() {
 
     console.log("Invalid products saved to file.");
 
-    if(invalidProducts.length == 0) return
 
-    updateInvalidTagsInShopify(invalidProducts)
+    await updateInvalidTagsInShopify(invalidProducts)
 
   } catch (err) {
     console.error("Error validating tags:", err);
