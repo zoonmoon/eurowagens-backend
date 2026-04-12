@@ -38,7 +38,7 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
 
           let value = obj.value;
           let originalValue = value 
-
+          
           if(obj.key == "oem_number") {
             parent[obj.key] = originalValue;
           }

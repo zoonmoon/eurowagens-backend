@@ -72,6 +72,7 @@ export async function fetchProductsWithCollectionsAndMetafields() {
                 edges {
                   node {
                     id
+                    key
                     value
                   }
                 }
