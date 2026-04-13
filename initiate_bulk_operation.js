@@ -67,7 +67,7 @@ export async function fetchProductsWithCollectionsAndMetafields() {
               id
               status
               tags
-              description
+              descriptionHtml
               metafields(first: 250) {
                 edges {
                   node {

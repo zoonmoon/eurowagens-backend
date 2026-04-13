@@ -5,12 +5,12 @@ import { parse } from "url";
 import cron from "node-cron";
 import { initiateBulkOperationOK } from "./initiate_bulk_operation.js";
 import { initiateInsertData } from "./insert_bulk_data_to_file.js";
-import { validateAndCorrectTags } from "./utils/validate_and_correct_tags.js";
+import { validateAndCorrectTags } from "./utils/update-in-shopify.js";
 import { writeStatus } from './utils/write_status.js';
 import { getRecentTagCorrections } from './utils/retrieve_recent_tag_corrrections.js';
 import { convertTagJsonsToCSV } from './utils/convert_to_csv.js';
 import path from "path";
-import { updateDescriptionAndTags } from './utils/update-partial-skus.js';
+import { updateDescriptionAndTags } from './utils/update-desc-and-tags.js';
 
 async function isJobRunning() {
   try {
@@ -252,7 +252,7 @@ const server = http.createServer(async (req, res) => {
         "Products scanned and tag inconsistencies resolved.",
         "completed"
       );
-
+      
       return sendJson(res, 200, { message: "Validated and corrected tags" });
 
     } catch (err) {
@@ -290,15 +290,11 @@ server.listen(PORT, "0.0.0.0", () => {
     console.log("Running bulk operation every hour...");
 
     try {
-      await fetch(process.env.SERVER_BASE_URL + "/initiate-bulk-operation");
+      //  await fetch(process.env.SERVER_BASE_URL + "/initiate-bulk-operation");
     } catch (err) {
       console.error("Cron failed:", err);
     }
   });
-
-
-
-
 
 
 });

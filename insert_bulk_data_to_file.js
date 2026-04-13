@@ -26,7 +26,7 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
           id: obj.id,
           tags: obj.tags || [],
           status: obj.status,
-          description: obj.description
+          descriptionHtml: obj.descriptionHtml
         };
         continue;
       }
