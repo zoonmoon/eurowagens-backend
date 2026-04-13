@@ -10,6 +10,7 @@ import { writeStatus } from './utils/write_status.js';
 import { getRecentTagCorrections } from './utils/retrieve_recent_tag_corrrections.js';
 import { convertTagJsonsToCSV } from './utils/convert_to_csv.js';
 import path from "path";
+import { updateDescriptionAndTags } from './utils/update-partial-skus.js';
 
 async function isJobRunning() {
   try {
@@ -217,9 +218,9 @@ const server = http.createServer(async (req, res) => {
       await initiateInsertData();
 
       fireAndForget(
-        process.env.SERVER_BASE_URL + "/validate-and-correct-tags",
+        process.env.SERVER_BASE_URL + "/update-description-and-tags",
         "Failed while validating tags",
-        "validate-and-correct-tags"
+        "update-description-and-tags"
       );
 
       return sendJson(res, 200, { message: "Data inserted into file" });
@@ -235,16 +236,16 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // ---- GET /validate-and-correct-tags ----
-  if (method === "GET" && url === "/validate-and-correct-tags") {
+  // ---- GET /update-description-and-tags ----
+  if (method === "GET" && url === "/update-description-and-tags") {
     try {
       await writeStatus(
         "running",
         "Fixing tag inconsistencies...",
-        "validate-and-correct-tags"
+        "update-description-and-tags"
       );
 
-      await validateAndCorrectTags();
+      await updateDescriptionAndTags();
 
       await writeStatus(
         "completed",
@@ -259,7 +260,7 @@ const server = http.createServer(async (req, res) => {
       await writeStatus(
         "failed",
         "Tag validation failed",
-        "validate-and-correct-tags"
+        "update-description-and-tags"
       );
       return sendJson(res, 500, { error: "Validation failed" });
     }
