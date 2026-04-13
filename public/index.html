@@ -11,7 +11,7 @@
     }
 
     h2 {
-      margin-top: 40px;
+      margin-top: 0px;
     }
 
     button {
@@ -79,22 +79,17 @@
 
 <!-- 🔵 LIVE RUN SECTION -->
 <div class="section">
-  <h2>Validate & Fix Tags</h2>
-
-  <button id="btn">Start Validation</button>
+  <h2> Tag Correction & Partial OEM SKU Generation
+</h2>
+  <button id="btn">Start Process</button>
 
   <div class="status" id="statusText"></div>
 </div>
 
 <!-- 🟢 RECENT RUNS SECTION -->
 <div class="section">
-  <h2>Recent Runs</h2>
-  <hr style="margin-top:20px; margin-bottom:20px;opacity:0.5">
-  <button id="view-all-runs">View all Runs</button>
-
-  <button id="viewResultsBtn">View Results for Latest Run</button>
-
-  <div id="results"></div>
+  <h2>Update Logs</h2>
+  <button id="download-full-change-logs">Download Full Change Logs</button>
 </div>
 
 <script>
@@ -135,8 +130,8 @@ async function initializeState() {
     } else {
       // idle or completed
       btn.disabled = false;
-      btn.innerText = "Start Validation";
-      statusText.innerText = "Completed previous run.";
+      btn.innerText = "Start Process";
+      statusText.innerText = "";
     }
 
   } catch {
@@ -195,7 +190,7 @@ async function fetchStatus() {
     if (data.status === "completed") {
       statusText.innerText = "Completed ✅";
       btn.disabled = false;
-      btn.innerText = "Start Validation";
+      btn.innerText = "Start Process";
       polling = false;
 
       // 🔥 AUTO REFRESH RESULTS AFTER COMPLETION
@@ -245,129 +240,9 @@ loadResults();
 
 <script>
 
-// ===============================
-// 🚀 VIEW ALL RUNS - FULL JS ONLY
-// ===============================
-
-// 1. Inject styles
-const style = document.createElement("style");
-style.innerHTML = `
-.modal-overlay {
-  position: fixed;
-  top:0; left:0;
-  width:100%; height:100%;
-  background: rgba(0,0,0,0.6);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  z-index:9999;
-}
-
-.modal-box {
-  background:#020617;
-  width:600px;
-  max-height:80vh;
-  overflow-y:auto;
-  border-radius:12px;
-  padding:20px; 
-  padding-bottom:0px;
-  box-shadow:0 0 30px rgba(0,0,0,0.5);
-  color:white;
-}
-
-.modal-header {
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  padding:20px;
-  padding-bottom:0px;
-  position:sticky;
-  top:0px;
-  background: #020617;
-
-}
-
-.close-btn {
-  cursor:pointer;
-  font-size:22px;
-}
-
-.run-item {
-  background:#1e293b;
-  padding:12px;
-  border-radius:8px;
-  margin-top:10px;
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-}
-#modalBody{
-  padding:20px;
-  padding-top:0px;
-}
-.download-btn {
-  background:#22c55e;
-  border:none;
-  padding:6px 10px;
-  border-radius:6px;
-  cursor:pointer;
-  color:white;
-  font-size:13px;
-}
-
-
-.modal-header .close-btn{
-  font-size:40px;
-}
-
-.spinner {
-  border:4px solid #334155;
-  border-top:4px solid #3b82f6;
-  border-radius:50%;
-  width:40px;
-  height:40px;
-  margin:40px auto;
-  animation:spin 1s linear infinite;
-}
-.modal-header h3{
-  margin-top: 0;
-  margin-bottom:0;
-}
-.modal-box{
-  border:1px solid white;
-  padding:0;
-}
-
-@keyframes spin {
-  to { transform:rotate(360deg); }
-}
-`;
-document.head.appendChild(style);
-
-
-// 2. Create modal dynamically
-const modal = document.createElement("div");
-modal.className = "modal-overlay";
-modal.style.display = "none";
-
-modal.innerHTML = `
-  <div class="modal-box">
-    <div class="modal-header">
-      <h3>Tag Inconsistencies Fixes Logs</h3>
-      <span class="close-btn">&times;</span>
-    </div>
-    <div id="modalBody"></div>
-  </div>
-`;
-
-document.body.appendChild(modal);
-
-const modalBody = modal.querySelector("#modalBody");
-const closeBtn = modal.querySelector(".close-btn");
-
 
 // 3. Get or create button
-let viewAllBtn = document.getElementById("view-all-runs");
+let viewAllBtn = document.getElementById("download-full-change-logs");
 
 if (!viewAllBtn) {
   viewAllBtn = document.createElement("button");
@@ -375,70 +250,17 @@ if (!viewAllBtn) {
   document.body.appendChild(viewAllBtn);
 }
 
-
 // 4. Open modal + fetch data
 viewAllBtn.onclick = async () => {
-  modal.style.display = "flex";
+  
+  const url = `/download-updates-log`;
+  
+  window.open(url, "_blank");
 
-  // spinner
-  modalBody.innerHTML = `<div class="spinner"></div>`;
-
-  try {
-    const res = await fetch("/recent-tag-corrections-list");
-    const files = await res.json();
-
-    if (!files.length) {
-      modalBody.innerHTML = "<p>No runs found</p>";
-      return;
-    }
-
-    modalBody.innerHTML = "";
-
-    files.forEach(file => {
-      const item = document.createElement("div");
-      item.className = "run-item";
-
-      item.innerHTML = `
-        <div>
-          <div><strong>${file.name.replaceAll('json','csv').replaceAll('most_recent_invalid_products_', '')}</strong></div>
-        </div>
-        <button class="download-btn">Download</button>
-      `;
-
-      // 🔥 DOWNLOAD
-      item.querySelector("button").onclick = () => {
-        const url = `/download-tag-correction-log?dirName=${encodeURIComponent(file.directory)}&file_name=${encodeURIComponent(file.name)}`;
-        window.open(url, "_blank");
-      };
-
-      modalBody.appendChild(item);
-    });
-
-  } catch (err) {
-    modalBody.innerHTML = "<p>Error loading runs</p>";
-  }
 };
 
-
-// 5. Close modal
-closeBtn.onclick = () => {
-  modal.style.display = "none";
-};
-
-// click outside
-modal.onclick = (e) => {
-  return 
-  if (e.target === modal) {
-    modal.style.display = "none";
-  }
-};
 
 </script>
-
-
-
-
-
 
 
 </body>

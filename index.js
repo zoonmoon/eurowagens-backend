@@ -5,12 +5,11 @@ import { parse } from "url";
 import cron from "node-cron";
 import { initiateBulkOperationOK } from "./initiate_bulk_operation.js";
 import { initiateInsertData } from "./insert_bulk_data_to_file.js";
-import { validateAndCorrectTags } from "./utils/update-in-shopify.js";
 import { writeStatus } from './utils/write_status.js';
 import { getRecentTagCorrections } from './utils/retrieve_recent_tag_corrrections.js';
-import { convertTagJsonsToCSV } from './utils/convert_to_csv.js';
 import path from "path";
 import { updateDescriptionAndTags } from './utils/update-desc-and-tags.js';
+import { convertLogsToCSV } from './utils/convert_to_csv.js';
 
 async function isJobRunning() {
   try {
@@ -40,20 +39,13 @@ const server = http.createServer(async (req, res) => {
   const parsedUrl = parse(req.url, true);
   const pathname = parsedUrl.pathname;
 
-  if (method === "GET" && pathname.includes("download-tag-correction-log")) {
+  if (method === "GET" && pathname.includes("download-updates-log")) {
     try {
-      const { dirName, file_name } = parsedUrl.query;
-
-      if (!dirName || !file_name) {
-        res.writeHead(400);
-        res.end("dirName and file_name are required");
-        return;
-      }
-
-      const outputFile = `temp.csv`;
 
       // ✅ use your existing function
-      await convertTagJsonsToCSV(dirName, outputFile, file_name);
+      await convertLogsToCSV();
+
+      var outputFile = "output.csv"
 
       const filePath = path.resolve(outputFile);
 
@@ -61,7 +53,7 @@ const server = http.createServer(async (req, res) => {
 
       res.writeHead(200, {
         "Content-Type": "text/csv",
-        "Content-Disposition": `attachment; filename="${file_name.replace(".json", ".csv")}"`
+        "Content-Disposition": `attachment; filename="update-logs.csv"`
       });
 
       res.end(file);
@@ -241,7 +233,7 @@ const server = http.createServer(async (req, res) => {
     try {
       await writeStatus(
         "running",
-        "Fixing tag inconsistencies...",
+        "Processing products...",
         "update-description-and-tags"
       );
 

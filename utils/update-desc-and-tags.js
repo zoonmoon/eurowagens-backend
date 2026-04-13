@@ -2,9 +2,9 @@ import fs from 'fs';
 import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { streamArray } from 'stream-json/streamers/stream-array.js';
-import { getCorrectedTags } from './correct-tags';
-import { getCorrectedDescription } from './correct-description';
-import { updateProductInShopify } from './update-in-shopify';
+import { getCorrectedTags } from './correct-tags.js';
+import { getCorrectedDescription } from './correct-description.js';
+import { updateProductInShopify } from './update-in-shopify.js';
 
 /**
  * Process large JSON file one item at a time (no batching)

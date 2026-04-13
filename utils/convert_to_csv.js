@@ -1,93 +1,86 @@
-import fs from "fs/promises";
-import path from "path";
+import fs from "fs";
+import readline from "readline";
 
-export async function convertTagJsonsToCSV(
-  dirName,
-  outputFile = "output.csv",
-  targetFileName = null // optional
+export async function convertLogsToCSV(
+  inputFile = "update-logs.txt",
+  outputFile = "output.csv"
 ) {
-  let files = [];
-    const dirPath = path.resolve(dirName);
+  const fileStream = fs.createReadStream(inputFile);
 
+  const rl = readline.createInterface({
+    input: fileStream,
+    crlfDelay: Infinity,
+  });
 
-  // ✅ Decide files to process
-  if (targetFileName) {
-    files = [targetFileName];
-  } else {
-    const dirents = await fs.readdir(dirPath, { withFileTypes: true });
-    files = dirents.filter(d => d.isFile()).map(d => d.name);
-  }
+  const writeStream = fs.createWriteStream(outputFile);
 
+  const headers = [
+    "date",
+    "id",
+    "haveTagsChanged",
+    "hasDescriptionChanged",
+    "oldDescriptionHtml",
+    "newDescriptionHtml",
+    "oldTags",
+    "newTags",
+  ];
 
-  console.log(files)
+  // ✅ write headers
+  writeStream.write(headers.join(",") + "\n");
 
+  let processed = 0;
+  let skipped = 0;
 
-  const rows = [];
-  const tagKeysSet = new Set();
-
-  for (const fileName of files) {
-    const filePath = path.join(dirPath, fileName);
-
-
-    console.log(filePath)
+  for await (const line of rl) {
+    if (!line.trim()) continue;
 
     try {
-      const stat = await fs.stat(filePath);
+      const item = JSON.parse(line);
 
-      // ✅ Skip empty arrays
-      if (stat.size <= 5) continue;
+      const row = {
+        date: item.date || "",
+        id: item.id || "",
+        haveTagsChanged: item.hasTagsChanged ?? "",
+        hasDescriptionChanged: item.hasDescriptionChanged ?? "",
+        oldDescriptionHtml: item.oldDescriptionHtml || "",
+        newDescriptionHtml: item.newDescriptionHtml || "",
+        oldTags: Array.isArray(item.originalTags)
+          ? item.originalTags.join(",")
+          : "",
+        newTags: Array.isArray(item.newTags)
+          ? item.newTags.join(",")
+          : "",
+      };
 
-        console.log("stat.size", stat.size)
+      const csvRow =
+        headers
+          .map((h) => `"${row[h].toString().replace(/"/g, '""')}"`)
+          .join(",") + "\n";
 
-      const content = await fs.readFile(filePath, "utf-8");
-      const json = JSON.parse(content);
+      // ✅ handle backpressure (important for huge files)
+      if (!writeStream.write(csvRow)) {
+        await new Promise((resolve) =>
+          writeStream.once("drain", resolve)
+        );
+      }
 
-      if (!Array.isArray(json)) continue;
+      processed++;
 
-      for (const item of json) {
-        const row = { id: item.id };
-
-        for (const key of Object.keys(item)) {
-          if (key.toLowerCase().includes("tag")) {
-            tagKeysSet.add(key);
-
-            // ✅ Join tags with comma (CSV-safe)
-            row[key] = Array.isArray(item[key])
-              ? item[key].join(",")
-              : item[key];
-          }
-        }
-
-        rows.push(row);
+      // ✅ optional progress log every 10k
+      if (processed % 10000 === 0) {
+        console.log(`Processed: ${processed}`);
       }
 
     } catch (err) {
-      console.error("Skipping invalid file:", fileName);
+      skipped++;
+      console.error("Skipping invalid line");
     }
   }
 
-  const headers = ["id", ...Array.from(tagKeysSet)];
-
-  // ✅ Build CSV
-  const csvLines = [
-    headers.join(","),
-
-    ...rows.map(row =>
-      headers
-        .map(h => {
-          const value = (row[h] ?? "").toString();
-
-          // escape quotes for CSV
-          return `"${value.replace(/"/g, '""')}"`;
-        })
-        .join(",")
-    )
-  ];
-
-  const csvContent = csvLines.join("\n");
-
-  await fs.writeFile(outputFile, csvContent, "utf-8");
+  // ✅ properly close stream
+  await new Promise((resolve) => writeStream.end(resolve));
 
   console.log("CSV generated:", outputFile);
-
+  console.log(`Total processed: ${processed}`);
+  console.log(`Total skipped: ${skipped}`);
 }

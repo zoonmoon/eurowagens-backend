@@ -1,3 +1,7 @@
 In the file "insert_bulk_data_to_file.js", change the code of the function  "insertProductsToFileInJSONform"
 currently all products are stored in one single variable but when there are 200K products, it can 
 blow up the memory 
+
+Update the auto responder email FAQ link at the bottom in the fking Powerful Form Builder
+below faq text: 
+If you have any questions, simply reply to this email, visit our FAQs or contact us at sales@eurowagens.com
