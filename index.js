@@ -10,6 +10,8 @@ import { getRecentTagCorrections } from './utils/retrieve_recent_tag_corrrection
 import path from "path";
 import { updateDescriptionAndTags } from './utils/update-desc-and-tags.js';
 import { convertLogsToCSV } from './utils/convert_to_csv.js';
+import { retainRecent15FilesOnly } from './utils/retain_recent_15_only.js';
+
 
 async function isJobRunning() {
   try {
@@ -119,6 +121,22 @@ const server = http.createServer(async (req, res) => {
       });
     }
   }
+
+  if (method === "GET" && url === "/retain-recent-15-files-only") {
+    try {
+      await retainRecent15FilesOnly();
+      return sendJson(res, 200, JSON.parse(data));
+    } catch {
+      return sendJson(res, 200, {
+        status: "idle",
+        message: "Ready",
+        sub_operation: null
+      });
+    }
+  }
+  
+
+
 
   // ---- GET /results ----
   if (method === "GET" && url === "/results") {
@@ -271,7 +289,7 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://0.0.0.0:${PORT}`);
 
   // ⏰ Cron starts AFTER server is up
-  cron.schedule("0 * * * *", async () => {
+  cron.schedule("0 1 * * *", async () => {
     console.log("Cron triggered...");
 
     if (await isJobRunning()) {
@@ -282,7 +300,8 @@ server.listen(PORT, "0.0.0.0", () => {
     console.log("Running bulk operation every hour...");
 
     try {
-      //  await fetch(process.env.SERVER_BASE_URL + "/initiate-bulk-operation");
+      await fetch(process.env.SERVER_BASE_URL + "/initiate-bulk-operation");
+      await retainRecent15FilesOnly()
     } catch (err) {
       console.error("Cron failed:", err);
     }

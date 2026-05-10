@@ -40,6 +40,7 @@ export async function updateProductInShopify(product) {
 
     const url = `https://${shop}/admin/api/2026-01/graphql.json`;
 
+    await sleep(200);
 
     const query = `
       mutation productUpdate($input: ProductInput!) {

@@ -66,6 +66,8 @@ export async function fetchProductsWithCollectionsAndMetafields() {
             node {
               id
               status
+              title
+              vendor
               tags
               descriptionHtml
               metafields(first: 250) {

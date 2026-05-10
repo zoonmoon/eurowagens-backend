@@ -7,6 +7,11 @@ import fs from "fs";
 import readline from "readline";
 import { backupCurrentProductsData } from "./utils/backup-file.js";
 
+import { pipeline } from "stream/promises";
+import { Readable } from "stream";
+
+
+
 export async function insertProductsToFileInJSONform(inputFilePath) {
   try {
     const rl = readline.createInterface({
@@ -14,48 +19,58 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
       crlfDelay: Infinity,
     });
 
-    const products = {};
+    const writeStream = fs.createWriteStream("products_from_shopify.txt", {
+      flags: "w",
+    });
+
+    let currentProduct = null;
 
     for await (const line of rl) {
       if (!line.trim()) continue;
       const obj = JSON.parse(line);
 
-      // Product line
+      // 🔹 New Product
       if (obj.id?.startsWith("gid://shopify/Product/")) {
-        products[obj.id] = {
+
+        // ✅ flush previous product
+        if (currentProduct && currentProduct.status?.toLowerCase() === "active") {
+          writeStream.write(JSON.stringify(currentProduct) + "\n");
+        }
+
+        // start new product
+        currentProduct = {
           id: obj.id,
           tags: obj.tags || [],
+          title: obj.title, 
           status: obj.status,
-          descriptionHtml: obj.descriptionHtml
+          vendor: obj.vendor,
+          descriptionHtml: obj.descriptionHtml,
+          oem_number: ''
         };
+        
         continue;
+        
       }
 
-      if (obj.__parentId && products[obj.__parentId]) {
-        const parent = products[obj.__parentId];
-
-        if (obj.id?.startsWith("gid://shopify/Metafield/")) {
-
-          let value = obj.value;
-          let originalValue = value 
-          
-          if(obj.key == "oem_number") {
-            parent[obj.key] = originalValue;
-          }
-
-        } 
+      // 🔹 Metafield
+      if (
+        currentProduct &&
+        obj.id?.startsWith("gid://shopify/Metafield/") &&
+        obj.key === "oem_number" &&
+        obj.__parentId === currentProduct.id
+      ) {
+        currentProduct.oem_number = obj.value;
       }
+
+
     }
 
-    const allProducts = Object.values(products).filter(p => p.status.toLowerCase() == "active");
+    // ✅ flush last product
+    if (currentProduct && currentProduct.status?.toLowerCase() === "active") {
+      writeStream.write(JSON.stringify(currentProduct) + "\n");
+    }
 
-    backupCurrentProductsData("backups", "products_in_json_form.json");
-    
-    fs.writeFileSync(
-      "products_in_json_form.json",
-      JSON.stringify(allProducts, null, 2),
-      "utf-8"
-    );
+    writeStream.end();
 
     console.log("All products inserted successfully.");
 
@@ -111,20 +126,22 @@ async function getShopifyBulkFileUrl() {
 }
 
 async function saveBulkOperationFile(fileUrl) {
-
   backupCurrentProductsData("backups-for-json-l", "bulk_operation_result.jsonl");
 
   const res = await fetch(fileUrl);
   if (!res.ok) throw new Error(`Failed to download file: ${res.statusText}`);
 
-  const buffer = await res.arrayBuffer();
-  const filePath = path.join(process.cwd(), "bulk_operation_result.jsonl"); // NDJSON format
+  const filePath = path.join(process.cwd(), "bulk_operation_result.jsonl");
 
-  fs.writeFileSync(filePath, Buffer.from(buffer));
+  await pipeline(
+    Readable.fromWeb(res.body), // 🔥 convert Web → Node stream
+    fs.createWriteStream(filePath)
+  );
 
   console.log(`✅ File saved at: ${filePath}`);
   return filePath;
 }
+
 
 export async function initiateInsertData(){
     let fileUrl = await getShopifyBulkFileUrl()

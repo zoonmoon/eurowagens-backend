@@ -1,7 +1,5 @@
 import fs from 'fs';
-import { chain } from 'stream-chain';
-import { parser } from 'stream-json';
-import { streamArray } from 'stream-json/streamers/stream-array.js';
+import readline from "readline";
 import { getCorrectedTags } from './correct-tags.js';
 import { getCorrectedDescription } from './correct-description.js';
 import { updateProductInShopify } from './update-in-shopify.js';
@@ -10,32 +8,36 @@ import { updateProductInShopify } from './update-in-shopify.js';
  * Process large JSON file one item at a time (no batching)
  */
 
-async function processLargeJsonOneByOne(filePath, processItem) {
-  return new Promise((resolve, reject) => {
-    const pipeline = chain([
-      fs.createReadStream(filePath),
-      parser(),
-      streamArray()
-    ]);
+export async function processLargeTextBlockOneByOne(filePath, processorFn) {
 
-    pipeline.on('data', async ({ value }) => {
-      pipeline.pause();
-
-      try {
-        await processItem(value);
-      } catch (err) {
-        // return reject(err);
-        console.log(err)
-      }
-
-      pipeline.resume();
+  try {
+    const rl = readline.createInterface({
+      input: fs.createReadStream(filePath),
+      crlfDelay: Infinity,
     });
 
-    pipeline.on('end', resolve);
-    pipeline.on('error', reject);
-  });
-}
+    for await (const line of rl) {
+      if (!line.trim()) continue;
 
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch (err) {
+        console.error("Skipping invalid JSON line:", line);
+        continue;
+      }
+
+      // 🔥 process one product at a time
+      await processorFn(obj);
+    }
+
+    console.log("Finished processing all products ✅");
+
+  } catch (err) {
+    console.error("Error processing file:", err);
+    throw err;
+  }
+}
 
 
 async function processProduct(product) {
@@ -61,6 +63,7 @@ async function processProduct(product) {
     try{
 
       await updateProductInShopify(comboProductDetails)
+
       fs.appendFileSync(
         "update-logs.txt",
         JSON.stringify(comboProductDetails) + "\n"
@@ -75,8 +78,8 @@ async function processProduct(product) {
 }
 
 export async function updateDescriptionAndTags() {
-  await processLargeJsonOneByOne(
-    "products_in_json_form.json",
+  await processLargeTextBlockOneByOne(
+    "products_from_shopify.txt",
     processProduct
   );
 }

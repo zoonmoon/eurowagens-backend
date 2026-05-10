@@ -5,3 +5,4 @@ a) Assign a webhook listener to bulk operation accomplish event from:
 node register_bulk_op_completion_webhook.js
 
 
+b) shopify products are ultimately saved to products_from_shopify.txt file line by line
