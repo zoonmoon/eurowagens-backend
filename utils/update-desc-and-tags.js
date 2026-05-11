@@ -10,6 +10,9 @@ import { updateProductInShopify } from './update-in-shopify.js';
 
 export async function processLargeTextBlockOneByOne(filePath, processorFn) {
 
+
+  let productsProcessed = 0
+
   try {
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath),
@@ -29,20 +32,27 @@ export async function processLargeTextBlockOneByOne(filePath, processorFn) {
 
       // 🔥 process one product at a time
       await processorFn(obj);
+      productsProcessed++
+      console.log("productsProcessed", productsProcessed)
+
     }
 
+    
     console.log("Finished processing all products ✅");
 
   } catch (err) {
+  
     console.error("Error processing file:", err);
+  
     throw err;
+  
   }
 }
 
 
 async function processProduct(product) {
 
-  let productWithCorrectedTags = getCorrectedTags(product)
+  let productWithCorrectedTags = await getCorrectedTags(product)
 
   let productWithCorrectedDescription = getCorrectedDescription(product) 
 
@@ -58,8 +68,7 @@ async function processProduct(product) {
   ){
 
     comboProductDetails.date = new Date().toISOString();
-
-
+    
     try{
 
       await updateProductInShopify(comboProductDetails)
@@ -71,9 +80,9 @@ async function processProduct(product) {
 
     }catch(err){
       console.log(err)
-    }
+    } 
 
-  }
+  } 
 
 }
 

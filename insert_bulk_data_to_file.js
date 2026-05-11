@@ -43,6 +43,7 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
           tags: obj.tags || [],
           title: obj.title, 
           status: obj.status,
+          skus: [],
           vendor: obj.vendor,
           descriptionHtml: obj.descriptionHtml,
           oem_number: ''
@@ -62,6 +63,15 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
         currentProduct.oem_number = obj.value;
       }
 
+      // Variant
+      if (
+        currentProduct &&
+        obj.id?.startsWith("gid://shopify/ProductVariant/") &&
+        obj.__parentId === currentProduct.id
+      ) {
+        if(obj.sku)
+          currentProduct.skus.push(obj.sku) 
+      }
 
     }
 

@@ -70,6 +70,14 @@ export async function fetchProductsWithCollectionsAndMetafields() {
               vendor
               tags
               descriptionHtml
+              variants {
+                edges {
+                  node {
+                    id
+                    sku
+                  }
+                }
+              }
               metafields(first: 250) {
                 edges {
                   node {
@@ -92,6 +100,10 @@ export async function fetchProductsWithCollectionsAndMetafields() {
 
 }
 
+
+
 export async function initiateBulkOperationOK(){
     await fetchProductsWithCollectionsAndMetafields()
 }
+
+

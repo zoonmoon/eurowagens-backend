@@ -2,11 +2,28 @@ export function getCorrectedDescription(product){
 
   let descriptionHtml = product.descriptionHtml
 
+  const splittedOEMnumbers = (product.oem_number || '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+
+
+  const splittedOEMnumbersAlongWithSKUs = [
+    ...(product.skus || []),
+    ...splittedOEMnumbers
+  ];
+
+  const mergedOEMnumbersAlongWithSKUs = [
+    ...new Set(splittedOEMnumbersAlongWithSKUs)
+  ].join(',');
+
+
+
   if(
     descriptionHtml.includes('partial-skus') ||
     (
-      !product.oem_number ||
-      product.oem_number.toString().trim().length < 4
+      !mergedOEMnumbersAlongWithSKUs ||
+      mergedOEMnumbersAlongWithSKUs.toString().trim().length < 4
     )
 
   )
@@ -39,7 +56,13 @@ export function getCorrectedDescription(product){
     return Array.from(result);
   } 
 
-  let partialOemSKUs =   generatePartialSkus(product.oem_number)
+
+
+
+
+  let partialOemSKUs =   generatePartialSkus(
+    mergedOEMnumbersAlongWithSKUs
+  ) 
 
   var newDescriptionHtml = `
     ${product.descriptionHtml}
@@ -47,6 +70,7 @@ export function getCorrectedDescription(product){
         ${partialOemSKUs.join(' , ')}
     </div>
   ` 
+
   return {
       ...product,
       newDescriptionHtml: newDescriptionHtml,
@@ -54,5 +78,5 @@ export function getCorrectedDescription(product){
       hasDescriptionChanged: true,
     }
 
-}
 
+}
