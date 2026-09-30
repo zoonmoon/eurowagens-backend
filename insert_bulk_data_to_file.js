@@ -29,6 +29,7 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
       if (!line.trim()) continue;
       const obj = JSON.parse(line);
 
+      // before 
       // 🔹 New Product
       if (obj.id?.startsWith("gid://shopify/Product/")) {
 

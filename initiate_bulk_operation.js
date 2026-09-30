@@ -133,6 +133,7 @@ export async function fetchProductsWithCollectionsAndMetafields() {
                   node {
                     id
                     key
+                    type
                     value
                   }
                 }
