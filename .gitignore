@@ -10,3 +10,6 @@ started_at.json
 status.json
 update-logs.txt
 product-template.csv
+credentials
+google-service-account.json
+fitment

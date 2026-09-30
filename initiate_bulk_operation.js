@@ -66,18 +66,68 @@ export async function fetchProductsWithCollectionsAndMetafields() {
             node {
               id
               status
+              productType
               title
               vendor
+              handle
               tags
               descriptionHtml
+
+              priceRangeV2 {
+                minVariantPrice {
+                  amount
+                  currencyCode
+                }
+                maxVariantPrice {
+                  amount
+                  currencyCode
+                }
+              }
+
+              featuredMedia {
+                preview {
+                  image {
+                    url
+                  }
+                }
+              }
+
+              media(first: 2) {
+                edges {
+                  node {
+                    preview {
+                      image {
+                        url
+                      }
+                    }
+                  }
+                }
+              }
+
+
+              collections {
+                edges {
+                  node {
+                    id
+                    title
+                    handle
+                    description
+                  }
+                }
+              }
+              
               variants {
                 edges {
                   node {
                     id
                     sku
+                    price
+                    availableForSale
+                    compareAtPrice
                   }
                 }
               }
+              
               metafields(first: 250) {
                 edges {
                   node {
