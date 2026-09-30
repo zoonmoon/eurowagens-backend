@@ -12,6 +12,85 @@ import { Readable } from "stream";
 
 
 
+// export async function insertProductsToFileInJSONform(inputFilePath) {
+//   try {
+//     const rl = readline.createInterface({
+//       input: fs.createReadStream(inputFilePath),
+//       crlfDelay: Infinity,
+//     });
+
+//     const writeStream = fs.createWriteStream("products_from_shopify.txt", {
+//       flags: "w",
+//     });
+
+//     let currentProduct = null;
+
+//     for await (const line of rl) {
+//       if (!line.trim()) continue;
+//       const obj = JSON.parse(line);
+
+//       // before 
+//       // 🔹 New Product
+//       if (obj.id?.startsWith("gid://shopify/Product/")) {
+
+//         // ✅ flush previous product
+//         if (currentProduct && currentProduct.status?.toLowerCase() === "active") {
+//           writeStream.write(JSON.stringify(currentProduct) + "\n");
+//         }
+
+//         // start new product
+//         currentProduct = {
+//           id: obj.id,
+//           tags: obj.tags || [],
+//           title: obj.title, 
+//           status: obj.status,
+//           skus: [],
+//           vendor: obj.vendor,
+//           descriptionHtml: obj.descriptionHtml,
+//           oem_number: ''
+//         };
+        
+//         continue;
+        
+//       }
+
+//       // 🔹 Metafield
+//       if (
+//         currentProduct &&
+//         obj.id?.startsWith("gid://shopify/Metafield/") &&
+//         obj.key === "oem_number" &&
+//         obj.__parentId === currentProduct.id
+//       ) {
+//         currentProduct.oem_number = obj.value;
+//       }
+
+//       // Variant
+//       if (
+//         currentProduct &&
+//         obj.id?.startsWith("gid://shopify/ProductVariant/") &&
+//         obj.__parentId === currentProduct.id
+//       ) {
+//         if(obj.sku)
+//           currentProduct.skus.push(obj.sku) 
+//       }
+
+//     }
+
+//     // ✅ flush last product
+//     if (currentProduct && currentProduct.status?.toLowerCase() === "active") {
+//       writeStream.write(JSON.stringify(currentProduct) + "\n");
+//     }
+
+//     writeStream.end();
+
+//     console.log("All products inserted successfully.");
+
+//   } catch (err) {
+//     console.error("Error inserting products:", err);
+//     throw err;
+//   }
+// }
+
 export async function insertProductsToFileInJSONform(inputFilePath) {
   try {
     const rl = readline.createInterface({
@@ -27,69 +106,159 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
 
     for await (const line of rl) {
       if (!line.trim()) continue;
+
       const obj = JSON.parse(line);
 
-      // before 
-      // 🔹 New Product
+      // PRODUCT
       if (obj.id?.startsWith("gid://shopify/Product/")) {
-
-        // ✅ flush previous product
-        if (currentProduct && currentProduct.status?.toLowerCase() === "active") {
+        // Flush previous product
+        if (
+          currentProduct &&
+          currentProduct.status?.toLowerCase() === "active"
+        ) {
           writeStream.write(JSON.stringify(currentProduct) + "\n");
         }
 
-        // start new product
+        // Start new product
         currentProduct = {
           id: obj.id,
-          tags: obj.tags || [],
-          title: obj.title, 
           status: obj.status,
-          skus: [],
+          productType: obj.productType,
+          title: obj.title,
           vendor: obj.vendor,
+          handle: obj.handle,
+          tags: obj.tags || [],
           descriptionHtml: obj.descriptionHtml,
-          oem_number: ''
+
+          priceRange: obj.priceRangeV2 || null,
+
+          // Featured image URL only
+          featuredImage: obj.featuredMedia?.preview?.image?.url || null,
+
+          // Media URLs only
+          media: [],
+
+          // Collections
+          collections: [],
+
+          // Variants
+          variants: [],
+
+          // Metafields
+          metafields: [],
+
+          // Keep existing convenient OEM field
+          oem_number: "",
+
+          // Existing SKU array
+          skus: [],
         };
-        
+
         continue;
-        
       }
 
-      // 🔹 Metafield
+      // Ignore anything before the first product
+      if (!currentProduct) continue;
+
+      // MEDIA
       if (
-        currentProduct &&
-        obj.id?.startsWith("gid://shopify/Metafield/") &&
-        obj.key === "oem_number" &&
+        obj.__parentId === currentProduct.id &&
+        obj.preview?.image?.url
+      ) {
+        currentProduct.media.push(obj.preview.image.url);
+
+        continue;
+      }
+
+      // COLLECTION
+      if (
+        obj.id?.startsWith("gid://shopify/Collection/") &&
         obj.__parentId === currentProduct.id
       ) {
-        currentProduct.oem_number = obj.value;
+        currentProduct.collections.push({
+          id: obj.id,
+          title: obj.title,
+          handle: obj.handle,
+          description: obj.description,
+        });
+
+        continue;
       }
 
-      // Variant
+      // VARIANT
       if (
-        currentProduct &&
         obj.id?.startsWith("gid://shopify/ProductVariant/") &&
         obj.__parentId === currentProduct.id
       ) {
-        if(obj.sku)
-          currentProduct.skus.push(obj.sku) 
+        currentProduct.variants.push({
+          id: obj.id,
+          sku: obj.sku || "",
+          price: obj.price || null,
+          availableForSale: obj.availableForSale ?? false,
+          compareAtPrice: obj.compareAtPrice || null,
+        });
+
+        // Keep existing SKU array
+        if (obj.sku) {
+          currentProduct.skus.push(obj.sku);
+        }
+
+        continue;
       }
 
+      // METAFIELD
+      if (
+        obj.id?.startsWith("gid://shopify/Metafield/") &&
+        obj.__parentId === currentProduct.id
+      ) {
+        let metafieldValue = obj.value;
+
+        // Convert list metafields from JSON string to actual array
+        if (
+          obj.type === "list.single_line_text_field" ||
+          obj.type === "list.metaobject_reference"
+        ) {
+          try {
+            metafieldValue = JSON.parse(obj.value);
+          } catch {
+            // Keep original value if it is not valid JSON
+            metafieldValue = obj.value;
+          }
+        }
+
+        currentProduct.metafields.push({
+          id: obj.id,
+          key: obj.key,
+          type: obj.type,
+          value: metafieldValue,
+        });
+
+        // Keep existing OEM number extraction
+        if (obj.key === "oem_number") {
+          currentProduct.oem_number = metafieldValue;
+        }
+
+        continue;
+      }
     }
 
-    // ✅ flush last product
-    if (currentProduct && currentProduct.status?.toLowerCase() === "active") {
+    // FLUSH LAST PRODUCT
+    if (
+      currentProduct &&
+      currentProduct.status?.toLowerCase() === "active"
+    ) {
       writeStream.write(JSON.stringify(currentProduct) + "\n");
     }
 
     writeStream.end();
 
     console.log("All products inserted successfully.");
-
   } catch (err) {
     console.error("Error inserting products:", err);
     throw err;
   }
 }
+
 
 async function getShopifyBulkFileUrl() {
   
