@@ -70,12 +70,12 @@ export function getCorrectedDescription(product){
         ${partialOemSKUs.join(' , ')}
     </div>
   ` 
-
+  
   return {
       ...product,
       newDescriptionHtml: newDescriptionHtml,
       oldDescriptionHtml: descriptionHtml,
-      hasDescriptionChanged: true,
+      hasDescriptionChanged: false,
     }
 
 

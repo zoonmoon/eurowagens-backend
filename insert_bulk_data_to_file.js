@@ -111,10 +111,11 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
 
       // PRODUCT
       if (obj.id?.startsWith("gid://shopify/Product/")) {
+
         // Flush previous product
         if (
-          currentProduct &&
-          currentProduct.status?.toLowerCase() === "active"
+          currentProduct 
+          // currentProduct.status?.toLowerCase() === "active"
         ) {
           writeStream.write(JSON.stringify(currentProduct) + "\n");
         }
@@ -239,6 +240,7 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
         }
 
         continue;
+        
       }
     }
 

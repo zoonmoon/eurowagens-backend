@@ -7,9 +7,8 @@ import { updateProductInShopify } from './update-in-shopify.js';
 /**
  * Process large JSON file one item at a time (no batching)
  */
-
+    
 export async function processLargeTextBlockOneByOne(filePath, processorFn) {
-
 
   let productsProcessed = 0
 
@@ -27,6 +26,12 @@ export async function processLargeTextBlockOneByOne(filePath, processorFn) {
         obj = JSON.parse(line);
       } catch (err) {
         console.error("Skipping invalid JSON line:", line);
+        continue;
+      }
+
+
+      // Only process ACTIVE products
+      if (obj.status?.toLowerCase() !== "active") {
         continue;
       }
 

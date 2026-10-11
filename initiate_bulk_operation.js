@@ -6,6 +6,10 @@ export async function shopifyGraphQL(query, variables = {}) {
 
     let accessToken = await generateShopifyAccessToken()
 
+    console.log("access token")
+    
+    console.log(accessToken)
+
     const response = await fetch(url, {
       method: "POST",
       headers: {

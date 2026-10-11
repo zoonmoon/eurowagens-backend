@@ -127,9 +127,9 @@ function validateRow(row) {
 
 
   // Vehicle type
-  if (!vehicle_type) {
-    errors.push("missing Vehicle Type");
-  }
+  // if (!vehicle_type) {
+  //   errors.push("missing Vehicle Type");
+  // }
 
 
   // SKU
@@ -170,15 +170,15 @@ function validateRow(row) {
 
 
   // Sub model
-  if (!sub_model) {
-    errors.push("missing sub_model");
-  }
+  // if (!sub_model) {
+  //   errors.push("missing sub_model");
+  // }
 
 
   // Engine
-  if (!engine) {
-    errors.push("missing engine");
-  }
+  // if (!engine) {
+  //   errors.push("missing engine");
+  // }
 
 
   if (errors.length > 0) {
