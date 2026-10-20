@@ -1,15 +1,16 @@
 
 // Only these Shopify metafields are imported into custom_fields
-const INCLUDED_METAFIELDS = [
-  "part_category",
-  "product_group",
-  "product_subgroup",
-  "traffic_side",
-  "fitting_position",
-  "colour",
-  "vehicle_types",
-  "accessory_group",
-];
+const INCLUDED_METAFIELDS = {
+  "part_category": "Part Category" ,
+  "product_group":  "Part Type",
+  "traffic_side": "Traffic Side",
+  "fitting_position": "Fitting Position",
+}
+
+
+
+
+
 
 function isEmptyValue(value) {
   return value === null || value === undefined || value === "";
@@ -163,12 +164,7 @@ export function transformProduct(product) {
 
   const customFields = [];
 
-  // Product Type
-  addCustomField(
-    customFields,
-    "Product Type",
-    product.productType
-  );
+
 
   // Brand
   addCustomField(
@@ -178,17 +174,17 @@ export function transformProduct(product) {
   );
 
   // Category = collection title
-  if (Array.isArray(productCollections)) {
-    for (const collection of productCollections) {
-      if (!collection?.title) continue;
+  // if (Array.isArray(productCollections)) {
+  //   for (const collection of productCollections) {
+  //     if (!collection?.title) continue;
 
-      addCustomField(
-        customFields,
-        "Category",
-        collection.title
-      );
-    }
-  }
+  //     addCustomField(
+  //       customFields,
+  //       "Category",
+  //       collection.title
+  //     );
+  //   }
+  // }
 
   // ---------------------------------------------------------
   // SELECTED METAFIELDS ONLY
@@ -197,11 +193,11 @@ export function transformProduct(product) {
   for (const metafield of metafields) {
     if (!metafield?.key) continue;
 
-    if (!INCLUDED_METAFIELDS.includes(metafield.key)) {
+    if (!Object.keys(INCLUDED_METAFIELDS).includes(metafield.key)) {
       continue;
     }
 
-    const label = formatLabel(metafield.key);
+    const label = INCLUDED_METAFIELDS[metafield.key] ||  formatLabel(metafield.key);
     const parsedValue = parseMetafieldValue(metafield.value);
 
     if (isEmptyValue(parsedValue)) {
@@ -310,6 +306,8 @@ export function transformProduct(product) {
     handle: product.handle || null,
 
     status: product.status || null,
+
+    created_at: product.created_at || null,
 
     title: product.title || null,
 

@@ -69,6 +69,7 @@ export async function fetchProductsWithCollectionsAndMetafields() {
           edges {
             node {
               id
+              createdAt
               status
               productType
               title

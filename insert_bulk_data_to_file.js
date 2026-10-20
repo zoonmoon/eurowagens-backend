@@ -123,6 +123,7 @@ export async function insertProductsToFileInJSONform(inputFilePath) {
         // Start new product
         currentProduct = {
           id: obj.id,
+          created_at: obj.createdAt,
           status: obj.status,
           productType: obj.productType,
           title: obj.title,

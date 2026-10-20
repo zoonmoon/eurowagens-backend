@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import csv from "csv-parser";
-
+import { MAKE_NORMALIZATION_MAP } from "./normalization-map.js";
 import openSearchClient from "../../utils/opensearch-client.js";
 
 const FITMENT_DIR = path.resolve("./fitment/incoming");
@@ -115,7 +115,9 @@ function validateRow(row) {
 
   const yearValue = normalize(row["year"]);
 
-  const make = normalize(row["make"]);
+  let make = normalize(row["make"]);
+
+  make = MAKE_NORMALIZATION_MAP[make.trim()] ?? make.trim();
 
   const model = normalize(row["model"]);
 
