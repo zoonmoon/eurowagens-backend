@@ -156,7 +156,7 @@ export function transformProduct(product) {
 
   const availability = hasAvailableVariant
     ? "In Stock"
-    : "Out of Stock";
+    : "Back Soon";
 
   // ---------------------------------------------------------
   // CUSTOM FIELDS
