@@ -12,6 +12,11 @@ import { updateDescriptionAndTags } from './utils/update-desc-and-tags.js';
 import { convertLogsToCSV } from './utils/convert_to_csv.js';
 import { retainRecent15FilesOnly } from './utils/retain_recent_15_only.js';
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile)
+
 
 async function isJobRunning() {
   try {
@@ -215,7 +220,7 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
-
+  
   // ---- GET /start-saving-to-file ----
   if (method === "GET" && url === "/start-saving-to-file") {
     try {
@@ -249,6 +254,21 @@ const server = http.createServer(async (req, res) => {
   // ---- GET /update-description-and-tags ----
   if (method === "GET" && url === "/update-description-and-tags") {
     try {
+
+
+      console.log("syncing new and updated products") 
+      execFileAsync(
+        "/usr/bin/node",
+        [
+          "fitment-data-and-products-sync-to-os/products-sync/new-and-updated-products/index.js",
+        ],
+        {
+          cwd: process.cwd(),
+        }
+      ).catch((err) => {
+        console.error("Products sync failed:", err);
+      });
+
       await writeStatus(
         "running",
         "Processing products...",

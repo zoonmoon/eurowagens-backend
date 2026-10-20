@@ -3,11 +3,11 @@
 const INCLUDED_METAFIELDS = {
   "part_category": "Part Category" ,
   "product_group":  "Part Type",
-  "traffic_side": "Traffic Side",
+  // "traffic_side": "Traffic Side",
+  "motorcycle_collection": "Motorcycle Collection", 
+  "motorcycle_part_type": "Motorcycle Part Type",
   "fitting_position": "Fitting Position",
 }
-
-
 
 
 
