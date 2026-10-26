@@ -77,6 +77,15 @@
 </head>
 <body>
 
+<div class="section">
+  <h2> Fitment Data Sync
+</h2>
+  <button id="fitment-sync-btn">Start Fitment Data Sync</button>
+
+  <div class="status" id="fitmentSyncStatusText"></div>
+</div>
+
+
 <!-- 🔵 LIVE RUN SECTION -->
 <div class="section">
   <h2> Tag Correction & Partial OEM SKU Generation
@@ -93,6 +102,32 @@
 </div>
 
 <script>
+
+const fitmentSyncBtn = document.getElementById('fitment-sync-btn')
+
+
+fitmentSyncBtn.onclick = async () => {
+  fitmentSyncBtn.disabled = true;
+  fitmentSyncStatusText.textContent = "Fitment sync running...";
+
+  try {
+    const response = await fetch("/sync-fitment-data");
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error || "Fitment sync failed.");
+    }
+
+    fitmentSyncStatusText.textContent = result.skipped
+      ? "Fitment sync is already running."
+      : result.message;
+  } catch (err) {
+    fitmentSyncStatusText.textContent = `Error: ${err.message}`;
+  } finally {
+    fitmentSyncBtn.disabled = false;
+  }
+};
+
 
 const btn = document.getElementById("btn");
 const viewBtn = document.getElementById("viewResultsBtn");

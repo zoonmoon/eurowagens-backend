@@ -1,174 +1,382 @@
-import 'dotenv/config';
+
+import "dotenv/config";
 import http from "http";
 import fs from "fs/promises";
 import { parse } from "url";
 import cron from "node-cron";
 import { initiateBulkOperationOK } from "./initiate_bulk_operation.js";
 import { initiateInsertData } from "./insert_bulk_data_to_file.js";
-import { writeStatus } from './utils/write_status.js';
-import { getRecentTagCorrections } from './utils/retrieve_recent_tag_corrrections.js';
+import { writeStatus } from "./utils/write_status.js";
+import { getRecentTagCorrections } from "./utils/retrieve_recent_tag_corrrections.js";
 import path from "path";
-import { updateDescriptionAndTags } from './utils/update-desc-and-tags.js';
-import { convertLogsToCSV } from './utils/convert_to_csv.js';
-import { retainRecent15FilesOnly } from './utils/retain_recent_15_only.js';
-
+import { updateDescriptionAndTags } from "./utils/update-desc-and-tags.js";
+import { convertLogsToCSV } from "./utils/convert_to_csv.js";
+import { retainRecent15FilesOnly } from "./utils/retain_recent_15_only.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile)
+const execFileAsync = promisify(execFile);
 
+// --------------------------------------------------
+// GLOBAL LOCKS
+// --------------------------------------------------
 
-async function isJobRunning() {
-  try {
-    const data = JSON.parse(await fs.readFile("status.json", "utf-8"));
-    return data.status === "running";
-  } catch {
+const MAX_JOB_DURATION = 2 * 24 * 60 * 60 * 1000; // 48 hours
+
+global.isBulkOperationRunning ??= false;
+global.bulkOperationStartedAt ??= null;
+
+global.isFitmentSyncRunning ??= false;
+global.fitmentSyncStartedAt ??= null;
+
+// Reset a lock if its task has been running for 48 hours.
+function resetStaleLock(lockName, startedAtName) {
+  if (!global[lockName]) {
     return false;
+  }
+
+  const startedAt = global[startedAtName];
+
+  if (
+    !startedAt ||
+    Date.now() - startedAt >= MAX_JOB_DURATION
+  ) {
+    console.warn(`Resetting stale lock: ${lockName}`);
+
+    global[lockName] = false;
+    global[startedAtName] = null;
+
+    return true;
+  }
+
+  return false;
+}
+
+function releaseBulkOperationLock() {
+  global.isBulkOperationRunning = false;
+  global.bulkOperationStartedAt = null;
+}
+
+// --------------------------------------------------
+// FITMENT SYNC
+// --------------------------------------------------
+
+async function syncFitmentData() {
+  resetStaleLock(
+    "isFitmentSyncRunning",
+    "fitmentSyncStartedAt"
+  );
+
+  if (global.isFitmentSyncRunning) {
+    console.log("Skipping fitment sync: task already running.");
+
+    return { skipped: true };
+  }
+
+  global.isFitmentSyncRunning = true;
+  global.fitmentSyncStartedAt = Date.now();
+
+  try {
+    console.log("Downloading fitment files from Google Drive...");
+
+    await execFileAsync(
+      "/usr/bin/rclone",
+      [
+        "sync",
+        "gdrive:",
+        "/root/eurowagens-backend/fitment/incoming",
+        "--drive-root-folder-id",
+        "1e4tXf7h7MY7n2mwLke-6i4fOsVcEWMan",
+      ],
+      {
+        cwd: "/root/eurowagens-backend",
+        timeout: 30 * 60 * 1000,
+          maxBuffer: 100 * 1024 * 1024,
+
+      }
+    );
+
+    console.log("Google Drive sync completed.");
+    console.log("Importing fitment data into OpenSearch...");
+
+    await execFileAsync(
+      "/usr/bin/node",
+      [
+        "fitment-data-and-products-sync-to-os/fitment-sync/from-server-file-to-database/index.js",
+      ],
+      {
+        cwd: "/root/eurowagens-backend",
+        timeout: 24 * 60 * 60 * 1000,
+          maxBuffer: 100 * 1024 * 1024,
+
+      }
+    );
+
+    console.log("Fitment sync completed successfully.");
+
+    return { success: true };
+  } catch (err) {
+    console.error("Fitment sync failed:", err);
+    throw err;
+  } finally {
+    global.isFitmentSyncRunning = false;
+    global.fitmentSyncStartedAt = null;
   }
 }
 
-// Helper to send JSON responses
+// --------------------------------------------------
+// HELPERS
+// --------------------------------------------------
+
 function sendJson(res, statusCode, data) {
-  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json",
+  });
+
   res.end(JSON.stringify(data));
 }
 
-// 🔥 fire-and-forget with failure handling
 function fireAndForget(url, failMessage, sub_operation) {
-  fetch(url).catch(async (err) => {
-    console.error("Async error:", err);
-    await writeStatus("failed", failMessage, sub_operation);
-  });
+  fetch(url)
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${url}`);
+      }
+    })
+    .catch(async (err) => {
+      console.error("Async error:", err);
+
+      releaseBulkOperationLock();
+
+      await writeStatus(
+        "failed",
+        failMessage,
+        sub_operation
+      );
+    });
 }
 
+// --------------------------------------------------
+// HTTP SERVER
+// --------------------------------------------------
+
 const server = http.createServer(async (req, res) => {
-  const { method, url } = req;
+  const { method } = req;
   const parsedUrl = parse(req.url, true);
   const pathname = parsedUrl.pathname;
 
-  if (method === "GET" && pathname.includes("download-updates-log")) {
-    try {
+  // -----------------------------------------------
+  // GET /download-updates-log
+  // -----------------------------------------------
 
-      // ✅ use your existing function
+  if (
+    method === "GET" &&
+    pathname.includes("download-updates-log")
+  ) {
+    try {
       await convertLogsToCSV();
 
-      var outputFile = "output.csv"
-
+      const outputFile = "output.csv";
       const filePath = path.resolve(outputFile);
-
       const file = await fs.readFile(filePath);
 
       res.writeHead(200, {
         "Content-Type": "text/csv",
-        "Content-Disposition": `attachment; filename="update-logs.csv"`
+        "Content-Disposition": 'attachment; filename="update-logs.csv"',
       });
 
       res.end(file);
 
-      // ✅ cleanup temp file (optional but good)
       await fs.unlink(filePath);
-
     } catch (err) {
       console.error(err);
-      res.writeHead(500);
-      res.end("CSV generation failed");
+
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end("CSV generation failed");
+      }
     }
 
     return;
   }
 
-
+  // -----------------------------------------------
+  // GET /
+  // -----------------------------------------------
 
   if (method === "GET" && pathname === "/") {
     try {
-      const html = await fs.readFile("./public/index.html", "utf-8");
-      res.writeHead(200, { "Content-Type": "text/html" });
+      const html = await fs.readFile(
+        "./public/index.html",
+        "utf-8"
+      );
+
+      res.writeHead(200, {
+        "Content-Type": "text/html",
+      });
+
       res.end(html);
     } catch (err) {
+      console.error(err);
+
       res.writeHead(500);
       res.end("Failed to load UI");
     }
+
     return;
   }
 
-  if (method === "GET" && pathname.includes('recent-tag-corrections-list')) {
-    try {
-      
-      var dirName = "backups-for-invalid-products"
+  // -----------------------------------------------
+  // GET /recent-tag-corrections-list
+  // -----------------------------------------------
 
-      const dirPath = path.resolve(dirName);
+  if (
+    method === "GET" &&
+    pathname.includes("recent-tag-corrections-list")
+  ) {
+    try {
+      const dirPath = path.resolve(
+        "backups-for-invalid-products"
+      );
+
       const files = await getRecentTagCorrections(dirPath);
 
-      res.writeHead(200, { "Content-Type": "application/json" });
-      
-      res.end(JSON.stringify(files));
-
+      return sendJson(res, 200, files);
     } catch (err) {
-      res.writeHead(500);
-        console.error("ERROR:", err); // 🔥 ADD THIS
+      console.error("ERROR:", err);
 
-      res.end("Failed to load data");
+      return sendJson(res, 500, {
+        error: "Failed to load data",
+      });
     }
-    return;
   }
 
+  // -----------------------------------------------
+  // GET /status
+  // -----------------------------------------------
 
-  // ---- GET /status ----
-  if (method === "GET" && url === "/status") {
+  if (method === "GET" && pathname === "/status") {
     try {
       const data = await fs.readFile("status.json", "utf-8");
+
       return sendJson(res, 200, JSON.parse(data));
     } catch {
       return sendJson(res, 200, {
         status: "idle",
         message: "Ready",
-        sub_operation: null
+        sub_operation: null,
       });
     }
   }
 
-  if (method === "GET" && url === "/retain-recent-15-files-only") {
+  // -----------------------------------------------
+  // GET /retain-recent-15-files-only
+  // -----------------------------------------------
+
+  if (
+    method === "GET" &&
+    pathname === "/retain-recent-15-files-only"
+  ) {
     try {
       await retainRecent15FilesOnly();
-      return sendJson(res, 200, JSON.parse(data));
-    } catch {
+
       return sendJson(res, 200, {
-        status: "idle",
-        message: "Ready",
-        sub_operation: null
+        success: true,
+        message: "Recent files retained successfully.",
+      });
+    } catch (err) {
+      console.error(err);
+
+      return sendJson(res, 500, {
+        success: false,
+        error: "Failed to retain recent files.",
       });
     }
   }
-  
 
+  // -----------------------------------------------
+  // GET /results
+  // -----------------------------------------------
 
-
-  // ---- GET /results ----
-  if (method === "GET" && url === "/results") {
+  if (method === "GET" && pathname === "/results") {
     try {
-      const data = await fs.readFile("most_recent_invalid_products.json", "utf-8");
+      const data = await fs.readFile(
+        "most_recent_invalid_products.json",
+        "utf-8"
+      );
+
       return sendJson(res, 200, JSON.parse(data));
     } catch {
       return sendJson(res, 200, []);
     }
   }
 
-  // ---- GET /initiate-bulk-operation ----
-  if (method === "GET" && url === "/initiate-bulk-operation") {
+  // -----------------------------------------------
+  // GET /sync-fitment-data
+  // -----------------------------------------------
 
+  if (
+    method === "GET" &&
+    pathname === "/sync-fitment-data"
+  ) {
     try {
+      const result = await syncFitmentData();
 
-      if (await isJobRunning()) {
-        console.log("Skipping: job already running");
-
+      if (result.skipped) {
         return sendJson(res, 200, {
-          message: "Job already running, skipped"
+          success: true,
+          skipped: true,
+          message: "Fitment sync is already running. Skipped.",
         });
       }
 
+      return sendJson(res, 200, {
+        success: true,
+        message: "Fitment sync completed successfully.",
+      });
+    } catch (err) {
+      return sendJson(res, 500, {
+        success: false,
+        message: "Fitment sync failed.",
+        error: err.message,
+      });
+    }
+  }
+
+  // -----------------------------------------------
+  // GET /initiate-bulk-operation
+  // -----------------------------------------------
+
+  if (
+    method === "GET" &&
+    pathname === "/initiate-bulk-operation"
+  ) {
+    resetStaleLock(
+      "isBulkOperationRunning",
+      "bulkOperationStartedAt"
+    );
+
+    if (global.isBulkOperationRunning) {
+      console.log("Skipping: bulk operation already running.");
+
+      return sendJson(res, 200, {
+        skipped: true,
+        message: "Bulk operation already running, skipped.",
+      });
+    }
+
+    // Acquire the lock before asynchronous work begins.
+    global.isBulkOperationRunning = true;
+    global.bulkOperationStartedAt = Date.now();
+
+    try {
       await fs.writeFile(
         "started_at.json",
-        JSON.stringify({ startedAt: new Date().toISOString() }, null, 2)
+        JSON.stringify(
+          { startedAt: new Date().toISOString() },
+          null,
+          2
+        )
       );
 
       await writeStatus(
@@ -179,21 +387,35 @@ const server = http.createServer(async (req, res) => {
 
       await initiateBulkOperationOK();
 
-      return sendJson(res, 200, { message: "Bulk operation initiated successfully" });
-
+      // Keep the lock until the downstream workflow finishes.
+      return sendJson(res, 200, {
+        message: "Bulk operation initiated successfully.",
+      });
     } catch (err) {
       console.error(err);
+
+      releaseBulkOperationLock();
+
       await writeStatus(
         "failed",
         "Failed to initiate bulk operation",
         "initiate-bulk-operation"
       );
-      return sendJson(res, 500, { error: "Failed to initiate bulk operation" });
+
+      return sendJson(res, 500, {
+        error: "Failed to initiate bulk operation.",
+      });
     }
   }
 
-  // ---- POST /webhook ----
-  if (method === "POST" && url === "/listen-to-bulk-op-completion-webhook") {
+  // -----------------------------------------------
+  // POST /listen-to-bulk-op-completion-webhook
+  // -----------------------------------------------
+
+  if (
+    method === "POST" &&
+    pathname === "/listen-to-bulk-op-completion-webhook"
+  ) {
     try {
       await writeStatus(
         "running",
@@ -209,20 +431,35 @@ const server = http.createServer(async (req, res) => {
         "Failed while saving products to file",
         "start-saving-to-file"
       );
-
     } catch (err) {
       console.error(err);
+
+      releaseBulkOperationLock();
+
       await writeStatus(
         "failed",
         "Webhook handling failed",
         "webhook"
       );
+
+      if (!res.headersSent) {
+        return sendJson(res, 500, {
+          error: "Webhook handling failed.",
+        });
+      }
     }
+
     return;
   }
-  
-  // ---- GET /start-saving-to-file ----
-  if (method === "GET" && url === "/start-saving-to-file") {
+
+  // -----------------------------------------------
+  // GET /start-saving-to-file
+  // -----------------------------------------------
+
+  if (
+    method === "GET" &&
+    pathname === "/start-saving-to-file"
+  ) {
     try {
       await writeStatus(
         "running",
@@ -233,47 +470,63 @@ const server = http.createServer(async (req, res) => {
       await initiateInsertData();
 
       fireAndForget(
-        process.env.SERVER_BASE_URL + "/update-description-and-tags",
+        process.env.SERVER_BASE_URL +
+          "/update-description-and-tags",
         "Failed while validating tags",
         "update-description-and-tags"
       );
 
-      return sendJson(res, 200, { message: "Data inserted into file" });
-
+      return sendJson(res, 200, {
+        message: "Data inserted into file.",
+      });
     } catch (err) {
       console.error(err);
+
+      releaseBulkOperationLock();
+
       await writeStatus(
         "failed",
         "Failed to save products to file",
         "start-saving-to-file"
       );
-      return sendJson(res, 500, { error: "Insert failed" });
+
+      return sendJson(res, 500, {
+        error: "Insert failed.",
+      });
     }
   }
 
-  // ---- GET /update-description-and-tags ----
-  if (method === "GET" && url === "/update-description-and-tags") {
+  // -----------------------------------------------
+  // GET /update-description-and-tags
+  // -----------------------------------------------
+
+  if (
+    method === "GET" &&
+    pathname === "/update-description-and-tags"
+  ) {
     try {
-
-
-      console.log("syncing new and updated products") 
-      execFileAsync(
-        "/usr/bin/node",
-        [
-          "fitment-data-and-products-sync-to-os/products-sync/new-and-updated-products/index.js",
-        ],
-        {
-          cwd: process.cwd(),
-        }
-      ).catch((err) => {
-        console.error("Products sync failed:", err);
-      });
-
       await writeStatus(
         "running",
         "Processing products...",
         "update-description-and-tags"
       );
+
+      console.log("Syncing new and updated products...");
+
+      await execFileAsync(
+        "/usr/bin/node",
+        [
+          "fitment-data-and-products-sync-to-os/products-sync/new-and-updated-products/index.js",
+        ],
+        {
+          cwd: "/root/eurowagens-backend",
+          timeout: 5 * 60 * 60 * 1000,
+          maxBuffer: 100 * 1024 * 1024,
+
+        }
+      );
+
+      console.log("Products sync completed.");
 
       await updateDescriptionAndTags();
 
@@ -282,50 +535,89 @@ const server = http.createServer(async (req, res) => {
         "Products scanned and tag inconsistencies resolved.",
         "completed"
       );
-      
-      return sendJson(res, 200, { message: "Validated and corrected tags" });
 
+      releaseBulkOperationLock();
+
+      return sendJson(res, 200, {
+        message: "Validated and corrected tags.",
+      });
     } catch (err) {
       console.error(err);
+
+      releaseBulkOperationLock();
+
       await writeStatus(
         "failed",
         "Tag validation failed",
         "update-description-and-tags"
       );
-      return sendJson(res, 500, { error: "Validation failed" });
+
+      return sendJson(res, 500, {
+        error: "Validation failed.",
+      });
     }
   }
 
-  // ---- 404 ----
-  res.writeHead(404, { "Content-Type": "text/plain" });
+  // -----------------------------------------------
+  // 404
+  // -----------------------------------------------
+
+  res.writeHead(404, {
+    "Content-Type": "text/plain",
+  });
+
   res.end("Not Found");
 });
 
+// --------------------------------------------------
+// SERVER + CRON SCHEDULES
+// --------------------------------------------------
+
 const PORT = 3000;
-
-
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://0.0.0.0:${PORT}`);
 
-  // ⏰ Cron starts AFTER server is up
-  cron.schedule("0 1 * * *", async () => {
-    console.log("Cron triggered...");
-
-    if (await isJobRunning()) {
-      console.log("Skipping: job already running");
-      return;
-    }
-
-    console.log("Running bulk operation every hour...");
+  // Daily fitment sync at 12:25 AM.
+  cron.schedule("25 0 * * *", async () => {
+    console.log("Scheduled fitment sync triggered.");
 
     try {
-      await fetch(process.env.SERVER_BASE_URL + "/initiate-bulk-operation");
-      await retainRecent15FilesOnly()
+      await syncFitmentData();
     } catch (err) {
-      console.error("Cron failed:", err);
+      console.error("Scheduled fitment sync failed:", err);
     }
   });
 
+  // Daily bulk operation at 1:00 AM.
+  cron.schedule("0 1 * * *", async () => {
+    console.log("Bulk-operation cron triggered.");
 
+    resetStaleLock(
+      "isBulkOperationRunning",
+      "bulkOperationStartedAt"
+    );
+
+    if (global.isBulkOperationRunning) {
+      console.log("Skipping: bulk operation already running.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        process.env.SERVER_BASE_URL +
+          "/initiate-bulk-operation"
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Bulk-operation request failed: HTTP ${response.status}`
+        );
+      }
+
+      await retainRecent15FilesOnly();
+    } catch (err) {
+      console.error("Bulk-operation cron failed:", err);
+    }
+  });
 });
