@@ -7,19 +7,15 @@ import { MAKE_NORMALIZATION_MAP } from "./normalization-map.js";
 import openSearchClient from "../../utils/opensearch-client.js";
 
 const FITMENT_DIR = path.resolve("./fitment/incoming");
-
 const INDEX_NAME = "fitment_data";
 
-const BATCH_SIZE = 1000;
-
-// Retry configuration
+const BATCH_SIZE = 10000;
+const PROGRESS_INTERVAL = 10000;
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY = 1000;
 
+const SOURCE_INDEX = `fitment_source_ids_${Date.now()}_${process.pid}`;
 
-/**
- * Required CSV columns.
- */
 const REQUIRED_COLUMNS = [
   "Vehicle Type",
   "sku",
@@ -32,28 +28,15 @@ const REQUIRED_COLUMNS = [
 
 const MIN_YEAR = 1900;
 const MAX_YEAR = new Date().getFullYear() + 2;
+const ABORT_ON_REJECTED_ROWS = false;
 
 
-/**
- * Normalize CSV value.
- *
- * We only clean whitespace.
- * We DO NOT remove punctuation because characters like
- * / - ( ) [ ] . , etc. can be meaningful automotive data.
- */
+/* -------------------- UTILITIES -------------------- */
+
 function normalize(value) {
-  return String(value ?? "")
-    .trim()
-    .replace(/\s+/g, " ");
+  return String(value ?? "").trim().replace(/\s+/g, " ");
 }
 
-
-/**
- * Generate deterministic OpenSearch document ID.
- *
- * The same exact fitment will always generate
- * the same ID.
- */
 function createFitmentId({
   vehicle_type,
   product_sku,
@@ -65,85 +48,48 @@ function createFitmentId({
 }) {
   return crypto
     .createHash("sha256")
-    .update(
-      [
-        vehicle_type,
-        product_sku,
-        year,
-        make,
-        model,
-        sub_model,
-        engine,
-      ].join("|")
-    )
+    .update([
+      vehicle_type,
+      product_sku,
+      year,
+      make,
+      model,
+      sub_model,
+      engine,
+    ].join("|"))
     .digest("hex");
 }
 
-
-/**
- * Validate CSV headers.
- *
- * The file must contain ALL required columns.
- * Extra columns are allowed.
- */
 function validateColumns(headers, fileName) {
-  const missingColumns = REQUIRED_COLUMNS.filter(
+  const missing = REQUIRED_COLUMNS.filter(
     (column) => !headers.includes(column)
   );
 
-  if (missingColumns.length > 0) {
-    console.log(`⏭️ Skipping ${fileName}`);
-
-    console.log(
-      `   Missing columns: ${missingColumns.join(", ")}`
+  if (missing.length) {
+    throw new Error(
+      `${fileName}: missing columns: ${missing.join(", ")}`
     );
-
-    return false;
   }
-
-  return true;
 }
 
-
-/**
- * Validate and normalize a single CSV row.
- */
 function validateRow(row) {
   const vehicle_type = normalize(row["Vehicle Type"]);
-
   const product_sku = normalize(row["sku"]);
-
   const yearValue = normalize(row["year"]);
 
   let make = normalize(row["make"]);
-
-  make = MAKE_NORMALIZATION_MAP[make.trim()] ?? make.trim();
+  make = MAKE_NORMALIZATION_MAP[make] ?? make;
 
   const model = normalize(row["model"]);
-
   const sub_model = normalize(row["sub_model"]);
-
   const engine = normalize(row["engine"]);
 
   const errors = [];
 
-
-  // Vehicle type
-  // if (!vehicle_type) {
-  //   errors.push("missing Vehicle Type");
-  // }
-
-
-  // SKU
-  if (!product_sku) {
-    errors.push("missing sku");
-  }
-
-
-  // Year
-  if (!yearValue) {
-    errors.push("missing year");
-  }
+  if (!product_sku) errors.push("missing sku");
+  if (!yearValue) errors.push("missing year");
+  if (!make) errors.push("missing make");
+  if (!model) errors.push("missing model");
 
   const year = Number(yearValue);
 
@@ -158,42 +104,12 @@ function validateRow(row) {
     errors.push(`invalid year "${yearValue}"`);
   }
 
-
-  // Make
-  if (!make) {
-    errors.push("missing make");
+  if (errors.length) {
+    return { valid: false, errors };
   }
-
-
-  // Model
-  if (!model) {
-    errors.push("missing model");
-  }
-
-
-  // Sub model
-  // if (!sub_model) {
-  //   errors.push("missing sub_model");
-  // }
-
-
-  // Engine
-  // if (!engine) {
-  //   errors.push("missing engine");
-  // }
-
-
-  if (errors.length > 0) {
-    return {
-      valid: false,
-      errors,
-    };
-  }
-
 
   return {
     valid: true,
-
     data: {
       vehicle_type,
       product_sku,
@@ -206,712 +122,716 @@ function validateRow(row) {
   };
 }
 
-
-/**
- * Wait for a specified amount of time.
- */
 function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-
-/**
- * Send a bulk request to OpenSearch with request-level retry logic.
- *
- * IMPORTANT:
- *
- * We ONLY retry if the OpenSearch request itself throws/fails.
- *
- * We intentionally DO NOT:
- *
- * - inspect response.body.errors
- * - inspect response.body.items
- * - inspect individual documents
- * - retry individual documents
- *
- * The complete bulk request is retried as-is.
- */
-async function bulkInsert(
-  operations,
-  batchNumber
-) {
-  if (operations.length === 0) {
-    return;
-  }
-
-
-  const rowsInBatch =
-    operations.length / 2;
-
-
-  for (
-    let attempt = 1;
-    attempt <= MAX_RETRIES;
-    attempt++
-  ) {
+async function withRetry(operation, description) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-
-      await openSearchClient.bulk({
-        body: operations,
-      });
-
-
-      // Request succeeded.
-      if (attempt > 1) {
-        console.log(
-          `   ✅ Batch ${batchNumber.toLocaleString()} succeeded on attempt ${attempt}/${MAX_RETRIES}`
-        );
-      }
-
-
-      return;
-
+      return await operation();
     } catch (error) {
-
-      const isLastAttempt =
-        attempt === MAX_RETRIES;
-
-
-      /**
-       * All retries exhausted.
-       */
-      if (isLastAttempt) {
-        console.error("");
-
-        console.error(
-          `❌ Batch ${batchNumber.toLocaleString()} failed after ${MAX_RETRIES} attempts`
+      if (attempt === MAX_RETRIES) {
+        throw new Error(
+          `${description} failed after ${MAX_RETRIES} attempts: ` +
+          (error?.message || error)
         );
-
-        console.error(
-          `   Rows in batch: ${rowsInBatch.toLocaleString()}`
-        );
-
-        console.error(
-          `   Last error: ${error?.message || error}`
-        );
-
-        throw error;
       }
 
-
-      /**
-       * Exponential backoff:
-       *
-       * Attempt 1 fails → wait 1 second
-       * Attempt 2 fails → wait 2 seconds
-       * Attempt 3 fails → wait 4 seconds
-       * Attempt 4 fails → wait 8 seconds
-       */
-      const retryDelay =
-        INITIAL_RETRY_DELAY *
-        Math.pow(2, attempt - 1);
-
-
-      console.error("");
+      const delay = INITIAL_RETRY_DELAY * 2 ** (attempt - 1);
 
       console.error(
-        `⚠️ Batch ${batchNumber.toLocaleString()} failed (attempt ${attempt}/${MAX_RETRIES})`
+        `⚠️ ${description}: attempt ${attempt}/${MAX_RETRIES} failed. ` +
+        `Retrying in ${delay / 1000}s. Error: ${error?.message || error}`
       );
 
-      console.error(
-        `   Rows in batch: ${rowsInBatch.toLocaleString()}`
-      );
-
-      console.error(
-        `   Error: ${error?.message || error}`
-      );
-
-      console.error(
-        `   Retrying in ${(retryDelay / 1000).toLocaleString()}s...`
-      );
-
-
-      await sleep(retryDelay);
+      await sleep(delay);
     }
   }
 }
 
 
+/* -------------------- BULK REQUESTS -------------------- */
+
 /**
- * Process a single CSV file.
+ * Handles index operations (action + document) and delete operations
+ * (action only), retrying individual failed operations.
  */
-async function processFile(filePath) {
+async function bulkRequest(operations, description) {
+  if (!operations.length) return;
+
+  let pending = operations;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    let response;
+
+    try {
+      response = await openSearchClient.bulk({ body: pending });
+    } catch (error) {
+      if (attempt === MAX_RETRIES) {
+        throw new Error(
+          `${description} failed: ${error?.message || error}`
+        );
+      }
+
+      const delay = INITIAL_RETRY_DELAY * 2 ** (attempt - 1);
+
+      console.error(
+        `⚠️ ${description}: bulk request failed; retrying in ${delay / 1000}s`
+      );
+
+      await sleep(delay);
+      continue;
+    }
+
+    const body = response.body ?? response;
+
+    if (!body.errors) return;
+
+    const items = body.items ?? [];
+    const failedOperations = [];
+    let offset = 0;
+
+    for (const item of items) {
+      const action = Object.keys(item)[0];
+      const result = item[action];
+
+      if (!action || !result) {
+        throw new Error(`${description}: invalid bulk response item`);
+      }
+
+      const operationLength = action === "delete" ? 1 : 2;
+
+      if (result.error || result.status >= 300) {
+        failedOperations.push(
+          ...pending.slice(offset, offset + operationLength)
+        );
+
+        console.error(
+          `⚠️ ${description}: ${action} failed:`,
+          JSON.stringify(result.error ?? result.status)
+        );
+      }
+
+      offset += operationLength;
+    }
+
+    if (offset !== pending.length) {
+      throw new Error(
+        `${description}: bulk response count mismatch. ` +
+        `Expected ${offset} operations, request had ${pending.length} entries.`
+      );
+    }
+
+    if (!failedOperations.length) return;
+
+    if (attempt === MAX_RETRIES) {
+      throw new Error(
+        `${description}: ${failedOperations.length} request entries still failed`
+      );
+    }
+
+    pending = failedOperations;
+
+    const delay = INITIAL_RETRY_DELAY * 2 ** (attempt - 1);
+    console.log(
+      `🔁 Retrying ${pending.length} failed entries in ${delay / 1000}s`
+    );
+
+    await sleep(delay);
+  }
+}
+
+
+/* -------------------- SOURCE ID INDEX -------------------- */
+
+async function markSourceIds(ids) {
+  if (!ids.length) return;
+
+  const operations = [];
+
+  for (const id of ids) {
+    operations.push({
+      index: {
+        _index: SOURCE_INDEX,
+        _id: id,
+      },
+    });
+
+    operations.push({ source: true });
+  }
+
+  await bulkRequest(operations, "Index source IDs");
+}
+
+
+/* -------------------- UPSERT FITMENTS -------------------- */
+
+async function upsertFitments(documents) {
+  if (!documents.length) return;
+
+  const operations = [];
+
+  for (const { id, data } of documents) {
+    operations.push({
+      index: {
+        _index: INDEX_NAME,
+        _id: id,
+      },
+    });
+
+    operations.push({
+      product_sku: data.product_sku,
+      vehicle_type: data.vehicle_type,
+      make: data.make,
+      model: data.model,
+      year: data.year,
+      sub_model: data.sub_model,
+      engine: data.engine,
+      notes: "",
+    });
+  }
+
+  await bulkRequest(operations, "Upsert fitments");
+}
+
+
+/* -------------------- PROCESS CSV -------------------- */
+
+async function processFile(filePath, mode, stats) {
   const fileName = path.basename(filePath);
 
   console.log("");
-  console.log("=================================");
-  console.log(`📄 Processing: ${fileName}`);
-  console.log("=================================");
+  console.log(
+    `📄 ${mode === "source" ? "Scanning" : "Upserting"}: ${fileName}`
+  );
 
+  const stream = fs
+    .createReadStream(filePath)
+    .pipe(
+      csv({
+        mapHeaders: ({ header }) =>
+          header
+            .replace(/^\uFEFF/, "")
+            .trim()
+            .replace(/\s+/g, " "),
+      })
+    );
 
-  return new Promise((resolve, reject) => {
+  let headersValidated = false;
+  let totalRows = 0;
+  let validRows = 0;
+  let rejectedRows = 0;
+  let batchNumber = 0;
 
-    let stream;
+  const rejectionReasons = {};
 
-    let headersValidated = false;
+  let idBatch = [];
+  let documentBatch = [];
 
-    let skipped = false;
+  stream.on("headers", (headers) => {
+    validateColumns(headers, fileName);
+    headersValidated = true;
 
-    let operations = [];
+    console.log(`   ✅ Headers validated: ${headers.length} columns`);
+    console.log("   📖 Starting row processing...");
+  });
 
-    let totalRows = 0;
+  async function flush() {
+    if (mode === "source" && idBatch.length) {
+      const batch = idBatch;
 
-    let indexedRows = 0;
+      console.log(
+        `   📤 Source batch ${batchNumber + 1}: ` +
+        `indexing ${batch.length.toLocaleString()} IDs...`
+      );
 
-    let rejectedRows = 0;
+      await markSourceIds(batch);
 
-    let batchNumber = 0;
-
-    const rejectionReasons = {};
-
-
-    /**
-     * Add rejection reason to statistics.
-     */
-    function addRejectionReasons(errors) {
-      for (const error of errors) {
-        rejectionReasons[error] =
-          (rejectionReasons[error] || 0) + 1;
-      }
-    }
-
-
-    /**
-     * Flush current bulk batch.
-     */
-    async function flushBatch() {
-
-      if (operations.length === 0) {
-        return;
-      }
-
-
-      const currentBatch =
-        operations;
-
-
-      operations = [];
-
-
+      stats.sourceRows += batch.length;
+      idBatch = [];
       batchNumber++;
 
-
-      /**
-       * Send the complete batch.
-       *
-       * If the request fails, bulkInsert()
-       * retries this exact batch.
-       */
-      await bulkInsert(
-        currentBatch,
-        batchNumber
+      console.log(
+        `   ✅ Source batch ${batchNumber} complete. ` +
+        `Valid rows read: ${validRows.toLocaleString()}`
       );
-
-
-      const rowsInBatch =
-        currentBatch.length / 2;
-
-
-      indexedRows +=
-        rowsInBatch;
-
-
-      if (
-        indexedRows % 10000 === 0
-      ) {
-        console.log(
-          `   Indexed ${indexedRows.toLocaleString()} rows`
-        );
-      }
     }
 
-
-    stream = fs
-      .createReadStream(filePath)
-      .pipe(
-        csv({
-          mapHeaders: ({ header }) =>
-            header
-              .replace(/^\uFEFF/, "")
-              .trim()
-              .replace(/\s+/g, " "),
-        })
-      )
-
-
-      /**
-       * CSV headers.
-       */
-      .on("headers", (headers) => {
-
-        if (
-          !validateColumns(
-            headers,
-            fileName
-          )
-        ) {
-
-          skipped = true;
-
-          stream.destroy();
-
-
-          resolve({
-            skipped: true,
-            totalRows: 0,
-            indexedRows: 0,
-            rejectedRows: 0,
-            rejectionReasons: {},
-          });
-
-
-          return;
-        }
-
-
-        headersValidated = true;
-
-
-        console.log(
-          `✅ Required columns found`
-        );
-      })
-
-
-      /**
-       * CSV row.
-       */
-      .on("data", async (row) => {
-
-        if (
-          skipped ||
-          !headersValidated
-        ) {
-          return;
-        }
-
-
-        stream.pause();
-
-
-        try {
-
-          totalRows++;
-
-
-          // Validate row.
-          const validation =
-            validateRow(row);
-
-
-          // Invalid row.
-          if (
-            !validation.valid
-          ) {
-
-            rejectedRows++;
-
-
-            addRejectionReasons(
-              validation.errors
-            );
-
-
-            stream.resume();
-
-
-            return;
-          }
-
-
-          const {
-            vehicle_type,
-            product_sku,
-            year,
-            make,
-            model,
-            sub_model,
-            engine,
-          } = validation.data;
-
-
-          // Generate deterministic ID.
-          const fitmentId =
-            createFitmentId({
-              vehicle_type,
-              product_sku,
-              year,
-              make,
-              model,
-              sub_model,
-              engine,
-            });
-
-
-          // Bulk metadata.
-          operations.push({
-            index: {
-              _index: INDEX_NAME,
-              _id: fitmentId,
-            },
-          });
-
-
-          // Document.
-          operations.push({
-
-            product_sku,
-
-            vehicle_type,
-
-            make,
-
-            model,
-
-            year,
-
-            sub_model,
-
-            engine,
-
-            notes: "",
-
-          });
-
-
-          /**
-           * 2 bulk entries per document:
-           *
-           * 1. action
-           * 2. document
-           */
-          if (
-            operations.length >=
-            BATCH_SIZE * 2
-          ) {
-
-            await flushBatch();
-
-          }
-
-        } catch (error) {
-
-          stream.destroy(error);
-
-          return;
-        }
-
-
-        stream.resume();
-      })
-
-
-      /**
-       * File finished.
-       */
-      .on("end", async () => {
-
-        if (skipped) {
-          return;
-        }
-
-
-        try {
-
-          // Flush remaining rows.
-          await flushBatch();
-
-
-          console.log("");
-
-          console.log(
-            `✅ Finished: ${fileName}`
-          );
-
-
-          console.log(
-            `   Total rows:    ${totalRows.toLocaleString()}`
-          );
-
-
-          console.log(
-            `   Indexed rows:  ${indexedRows.toLocaleString()}`
-          );
-
-
-          console.log(
-            `   Rejected rows: ${rejectedRows.toLocaleString()}`
-          );
-
-
-          if (
-            rejectedRows > 0
-          ) {
-
-            console.log("");
-
-            console.log(
-              "⚠️ Rejection reasons:"
-            );
-
-
-            for (
-              const [
-                reason,
-                count,
-              ] of Object.entries(
-                rejectionReasons
-              )
-            ) {
-
-              console.log(
-                `   ${reason}: ${count.toLocaleString()}`
-              );
-
-            }
-          }
-
-
-          resolve({
-
-            skipped: false,
-
-            totalRows,
-
-            indexedRows,
-
-            rejectedRows,
-
-            rejectionReasons,
-
-          });
-
-        } catch (error) {
-
-          reject(error);
-
-        }
-      })
-
-
-      /**
-       * Stream error.
-       */
-      .on("error", (error) => {
-
-        reject(error);
-
-      });
-
-  });
-}
-
-
-/**
- * Main sync function.
- */
-async function syncFitmentData() {
-
-  console.log("");
-
-  console.log(
-    "🚀 Starting fitment sync"
-  );
-
-
-  console.log(
-    `📁 Directory: ${FITMENT_DIR}`
-  );
-
-
-  console.log(
-    `📦 Batch size: ${BATCH_SIZE}`
-  );
-
-
-  console.log(
-    `🔄 Max retries: ${MAX_RETRIES}`
-  );
-
-
-  console.log(
-    `⏱️ Initial retry delay: ${INITIAL_RETRY_DELAY}ms`
-  );
-
-
-  // Check directory.
-  if (
-    !fs.existsSync(FITMENT_DIR)
-  ) {
-
-    throw new Error(
-      `Fitment directory does not exist: ${FITMENT_DIR}`
-    );
-
-  }
-
-
-  // Find CSV files.
-  const files = fs
-    .readdirSync(FITMENT_DIR)
-    .filter(
-      (file) =>
-        file
-          .toLowerCase()
-          .endsWith(".csv")
-    );
-
-
-  if (
-    files.length === 0
-  ) {
-
-    console.log(
-      "⚠️ No CSV files found."
-    );
-
-    return;
-
-  }
-
-
-  console.log(
-    `📁 Found ${files.length} CSV files`
-  );
-
-
-  let totalIndexed = 0;
-
-  let totalRejected = 0;
-
-  let skippedFiles = 0;
-
-
-  // Process files one by one.
-  for (
-    const file of files
-  ) {
-
-    const filePath =
-      path.join(
-        FITMENT_DIR,
-        file
+    if (mode === "upsert" && documentBatch.length) {
+      const batch = documentBatch;
+
+      console.log(
+        `   📤 Upsert batch ${batchNumber + 1}: ` +
+        `${batch.length.toLocaleString()} documents...`
       );
 
+      await upsertFitments(batch);
 
-    try {
+      stats.upsertedRows += batch.length;
+      documentBatch = [];
+      batchNumber++;
 
-      const result =
-        await processFile(
-          filePath
+      console.log(
+        `   ✅ Upsert batch ${batchNumber} complete. ` +
+        `Valid rows read: ${validRows.toLocaleString()}`
+      );
+    }
+  }
+
+  try {
+    for await (const row of stream) {
+      if (!headersValidated) {
+        throw new Error(`${fileName}: headers were not validated`);
+      }
+
+      totalRows++;
+
+      if (totalRows % PROGRESS_INTERVAL === 0) {
+        console.log(
+          `   📊 ${fileName}: read ${totalRows.toLocaleString()} rows; ` +
+          `${validRows.toLocaleString()} valid; ` +
+          `${rejectedRows.toLocaleString()} rejected`
         );
+      }
 
+      const validation = validateRow(row);
 
-      if (
-        result.skipped
-      ) {
+      if (!validation.valid) {
+        rejectedRows++;
 
-        skippedFiles++;
+        for (const reason of validation.errors) {
+          rejectionReasons[reason] =
+            (rejectionReasons[reason] || 0) + 1;
+        }
 
         continue;
-
       }
 
+      validRows++;
 
-      totalIndexed +=
-        result.indexedRows;
+      const data = validation.data;
+      const id = createFitmentId(data);
 
+      if (mode === "source") {
+        idBatch.push(id);
+      } else {
+        documentBatch.push({ id, data });
+      }
 
-      totalRejected +=
-        result.rejectedRows;
+      const currentBatchSize =
+        mode === "source" ? idBatch.length : documentBatch.length;
 
-
-    } catch (error) {
-
-      console.error("");
-
-      console.error(
-        `❌ Failed processing ${file}`
-      );
-
-
-      console.error(error);
-
-
-      throw error;
-
+      if (currentBatchSize >= BATCH_SIZE) {
+        await flush();
+      }
     }
+
+    if (!headersValidated) {
+      throw new Error(`${fileName}: no valid CSV headers found`);
+    }
+
+    await flush();
+
+    console.log("");
+    console.log(`   📋 Finished: ${fileName}`);
+    console.log(`   Total rows: ${totalRows.toLocaleString()}`);
+    console.log(`   Valid rows: ${validRows.toLocaleString()}`);
+    console.log(`   Rejected rows: ${rejectedRows.toLocaleString()}`);
+    console.log(`   Batches processed: ${batchNumber}`);
+
+    for (const [reason, count] of Object.entries(rejectionReasons)) {
+      console.log(`   ⚠️ ${reason}: ${count.toLocaleString()}`);
+    }
+
+    stats.totalRows += totalRows;
+    stats.rejectedRows += rejectedRows;
+
+    if (rejectedRows && ABORT_ON_REJECTED_ROWS) {
+      throw new Error(
+        `${fileName}: ${rejectedRows} invalid rows. ` +
+        "Aborting before reconciliation can continue."
+      );
+    }
+  } catch (error) {
+    stream.destroy();
+    throw error;
   }
+}
 
 
-  console.log("");
+/* -------------------- INDEX COUNT -------------------- */
 
-  console.log(
-    "================================="
+async function getIndexCount(index) {
+  const response = await withRetry(
+    () => openSearchClient.count({ index }),
+    `Count documents in ${index}`
   );
 
+  return (response.body ?? response).count;
+}
 
-  console.log(
-    "🎉 FITMENT SYNC COMPLETE"
+
+/* -------------------- COMPARE TARGET TO SOURCE -------------------- */
+
+/**
+ * For each target batch, query the temporary source index once using
+ * an IDs query. Return only target IDs that are absent from the source.
+ */
+async function findMissingIds(hits) {
+  if (!hits.length) return [];
+
+  const ids = hits.map((hit) => hit._id);
+
+  const response = await withRetry(
+    () =>
+      openSearchClient.search({
+        index: SOURCE_INDEX,
+        size: ids.length,
+        _source: false,
+        body: {
+          query: {
+            ids: { values: ids },
+          },
+        },
+      }),
+    "Compare target IDs with source index"
   );
 
+  const body = response.body ?? response;
+  const sourceHits = body.hits?.hits ?? [];
 
-  console.log(
-    "================================="
-  );
+  const sourceIds = new Set(sourceHits.map((hit) => hit._id));
 
-
-  console.log(
-    `Files found:     ${files.length}`
-  );
-
-
-  console.log(
-    `Files skipped:   ${skippedFiles}`
-  );
-
-
-  console.log(
-    `Rows indexed:    ${totalIndexed.toLocaleString()}`
-  );
-
-
-  console.log(
-    `Rows rejected:   ${totalRejected.toLocaleString()}`
-  );
-
-
-  console.log(
-    "================================="
-  );
+  return ids.filter((id) => !sourceIds.has(id));
 }
 
 
 /**
- * Run.
+ * Iterate the target index using scroll pagination.
+ * Calls onBatch with each batch's missing IDs.
  */
-syncFitmentData()
+async function scanTargetIndex(onBatch, phaseLabel) {
+  let scrollId;
 
-  .catch((error) => {
-
-    console.error("");
-
-    console.error(
-      "❌ Fitment sync failed"
+  try {
+    let response = await withRetry(
+      () =>
+        openSearchClient.search({
+          index: INDEX_NAME,
+          scroll: "2m",
+          size: BATCH_SIZE,
+          _source: false,
+          body: {
+            query: { match_all: {} },
+          },
+        }),
+      `${phaseLabel}: start target scroll`
     );
 
+    let body = response.body ?? response;
+    scrollId = body._scroll_id;
 
+    let scanned = 0;
+    let batchNumber = 0;
+
+    while (body.hits?.hits?.length) {
+      const hits = body.hits.hits;
+
+      const missingIds = await findMissingIds(hits);
+
+      await onBatch(missingIds, {
+        scanned: scanned + hits.length,
+        batchNumber: batchNumber + 1,
+        batchSize: hits.length,
+      });
+
+      scanned += hits.length;
+      batchNumber++;
+
+      console.log(
+        `   🔎 ${phaseLabel}: checked ${scanned.toLocaleString()} target documents; ` +
+        `${missingIds.length.toLocaleString()} missing in this batch`
+      );
+
+      response = await withRetry(
+        () =>
+          openSearchClient.scroll({
+            scroll: "2m",
+            scroll_id: scrollId,
+          }),
+        `${phaseLabel}: continue target scroll`
+      );
+
+      body = response.body ?? response;
+      scrollId = body._scroll_id ?? scrollId;
+    }
+
+    return scanned;
+  } finally {
+    if (scrollId) {
+      try {
+        await openSearchClient.clearScroll({
+          scroll_id: scrollId,
+        });
+      } catch (error) {
+        console.error(
+          "⚠️ Failed to clear target scroll:",
+          error?.message || error
+        );
+      }
+    }
+  }
+}
+
+
+/* -------------------- DELETE OBSOLETE FITMENTS -------------------- */
+
+async function deleteMissingFitments() {
+  console.log("");
+  console.log("========== PHASE 2: DELETE MISSING IDS ==========");
+  console.log("📊 Pass 1/2: counting deletions; nothing is deleted yet.");
+
+  let totalToDelete = 0;
+  let totalScanned = 0;
+
+  totalScanned = await scanTargetIndex(
+    async (missingIds, progress) => {
+      totalToDelete += missingIds.length;
+
+      if (
+        progress.scanned % PROGRESS_INTERVAL < BATCH_SIZE ||
+        missingIds.length
+      ) {
+        console.log(
+          `   📊 Deletion count so far: ${totalToDelete.toLocaleString()} ` +
+          `obsolete out of ${progress.scanned.toLocaleString()} checked`
+        );
+      }
+    },
+    "Count pass"
+  );
+
+  console.log("");
+  console.log("========== DELETION SUMMARY ==========");
+  console.log(`Existing documents checked: ${totalScanned.toLocaleString()}`);
+  console.log(`Total deletions to perform: ${totalToDelete.toLocaleString()}`);
+  console.log("======================================");
+
+  if (totalToDelete === 0) {
+    console.log("✅ No obsolete fitments to delete.");
+    return 0;
+  }
+
+
+  if(totalToDelete > 10000){
+    console.log("Deletion limit reached") 
+    return 0
+  }
+  
+  console.log("");
+  console.log("📊 Pass 2/2: deleting obsolete documents...");
+
+  let deleted = 0;
+
+  await scanTargetIndex(
+    async (missingIds) => {
+      if (!missingIds.length) return;
+
+      const operations = missingIds.map((id) => ({
+        delete: {
+          _index: INDEX_NAME,
+          _id: id,
+        },
+      }));
+
+      await bulkRequest(operations, "Delete obsolete fitments");
+
+      deleted += missingIds.length;
+
+      const percentage = (deleted / totalToDelete) * 100;
+
+      console.log(
+        `   🗑️ Deletion progress: ${deleted.toLocaleString()} / ` +
+        `${totalToDelete.toLocaleString()} (${percentage.toFixed(1)}%)`
+      );
+    },
+    "Delete pass"
+  );
+
+  console.log("");
+  console.log(`✅ Deletion completed: ${deleted.toLocaleString()} documents deleted.`);
+
+  if (deleted !== totalToDelete) {
+    console.warn(
+      `⚠️ Counted ${totalToDelete} obsolete documents, but deleted ${deleted}. ` +
+      "The target index may have changed during reconciliation."
+    );
+  }
+
+  return deleted;
+}
+
+
+/* -------------------- MAIN SYNC -------------------- */
+
+async function syncFitmentData() {
+  let sourceIndexCreated = false;
+
+  const stats = {
+    totalRows: 0,
+    rejectedRows: 0,
+    sourceRows: 0,
+    upsertedRows: 0,
+  };
+
+  try {
+    console.log("");
+    console.log("🚀 Starting fitment reconciliation");
+    console.log(`📁 Directory: ${FITMENT_DIR}`);
+    console.log(`🎯 Target index: ${INDEX_NAME}`);
+
+    if (!fs.existsSync(FITMENT_DIR)) {
+      throw new Error(`Directory does not exist: ${FITMENT_DIR}`);
+    }
+
+    const files = fs
+      .readdirSync(FITMENT_DIR)
+      .filter((file) => file.toLowerCase().endsWith(".csv"))
+      .sort();
+
+    if (!files.length) {
+      throw new Error("No CSV files found. Refusing to delete fitments.");
+    }
+
+    console.log(`📁 Found ${files.length} CSV files`);
+
+    console.log("");
+    console.log(`🛠️ Creating temporary index: ${SOURCE_INDEX}`);
+
+    await openSearchClient.indices.create({
+      index: SOURCE_INDEX,
+      body: {
+        mappings: {
+          properties: {
+            source: { type: "boolean" },
+          },
+        },
+      },
+    });
+
+    sourceIndexCreated = true;
+
+    // PHASE 1: Build the combined source-ID set.
+    console.log("");
+    console.log("========== PHASE 1: BUILD SOURCE IDS ==========");
+
+    for (let i = 0; i < files.length; i++) {
+      console.log(`📁 Source file ${i + 1}/${files.length}`);
+
+      await processFile(
+        path.join(FITMENT_DIR, files[i]),
+        "source",
+        stats
+      );
+    }
+
+    await withRetry(
+      () => openSearchClient.indices.refresh({ index: SOURCE_INDEX }),
+      "Refresh temporary source index"
+    );
+
+    const sourceCount = await getIndexCount(SOURCE_INDEX);
+
+    console.log("");
+    console.log("========== SOURCE INDEX SUMMARY ==========");
+    console.log(`CSV files: ${files.length}`);
+    console.log(`Valid source rows processed: ${stats.sourceRows.toLocaleString()}`);
+    console.log(`Unique source IDs: ${sourceCount.toLocaleString()}`);
+    console.log(`Rejected rows: ${stats.rejectedRows.toLocaleString()}`);
+    console.log("==========================================");
+
+    if (sourceCount < 1) {
+      throw new Error(
+        "Source index is empty. Refusing to delete existing fitments."
+      );
+    }
+
+    if (ABORT_ON_REJECTED_ROWS && stats.rejectedRows > 0) {
+      throw new Error("Invalid rows detected. Aborting before deletion.");
+    }
+
+    // PHASE 2: Count obsolete IDs and delete them before upserting.
+    const deleted = await deleteMissingFitments();
+
+    // PHASE 3: Upsert all valid CSV rows.
+    console.log("");
+    console.log("========== PHASE 3: UPSERT FITMENTS ==========");
+
+    for (let i = 0; i < files.length; i++) {
+      console.log(`📁 Upsert file ${i + 1}/${files.length}`);
+
+      await processFile(
+        path.join(FITMENT_DIR, files[i]),
+        "upsert",
+        stats
+      );
+    }
+
+    await withRetry(
+      () => openSearchClient.indices.refresh({ index: INDEX_NAME }),
+      "Refresh fitment index"
+    );
+
+    const finalCount = await getIndexCount(INDEX_NAME);
+
+    console.log("");
+    console.log("==========================================");
+    console.log("🎉 FITMENT RECONCILIATION COMPLETE");
+    console.log("==========================================");
+    console.log(`Files processed: ${files.length}`);
+    console.log(`Unique source IDs: ${sourceCount.toLocaleString()}`);
+    console.log(`Deleted documents: ${deleted.toLocaleString()}`);
+    console.log(`Upserted rows: ${stats.upsertedRows.toLocaleString()}`);
+    console.log(`Final target count: ${finalCount.toLocaleString()}`);
+    console.log("==========================================");
+  } finally {
+    if (sourceIndexCreated) {
+      console.log("");
+      console.log(`🧹 Deleting temporary index: ${SOURCE_INDEX}`);
+
+      try {
+        await openSearchClient.indices.delete({
+          index: SOURCE_INDEX,
+        });
+
+        console.log("✅ Temporary source index deleted");
+      } catch (error) {
+        console.error(
+          "⚠️ Could not delete temporary index:",
+          error?.message || error
+        );
+      }
+    }
+  }
+}
+
+
+syncFitmentData()
+  .catch((error) => {
+    console.error("");
+    console.error("❌ FITMENT RECONCILIATION FAILED");
     console.error(error);
 
-
     process.exitCode = 1;
-
   })
-
   .finally(async () => {
-
-    await openSearchClient.close();
-
+    try {
+      await openSearchClient.close();
+    } catch (error) {
+      console.error(
+        "⚠️ Failed to close OpenSearch client:",
+        error?.message || error
+      );
+    }
   });

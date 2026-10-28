@@ -14,6 +14,201 @@ import { transformProduct } from "./utils.js";
 // BULK UPSERT
 // ---------------------------------------------------------
 
+
+// ---------------------------------------------------------
+// READ ALL SHOPIFY PRODUCT IDS
+// ---------------------------------------------------------
+
+async function getShopifyProductIds() {
+  console.log("📄 Reading Shopify product IDs...");
+
+  const shopifyIds = new Set();
+
+  const fileStream = fs.createReadStream(INPUT_FILE, {
+    encoding: "utf8",
+  });
+
+  const rl = readline.createInterface({
+    input: fileStream,
+    crlfDelay: Infinity,
+  });
+
+  let totalLines = 0;
+
+  for await (const line of rl) {
+    totalLines++;
+
+    const trimmedLine = line.trim();
+
+    if (!trimmedLine) continue;
+
+    let product;
+
+    try {
+      product = JSON.parse(trimmedLine);
+    } catch (error) {
+      throw new Error(
+        `Invalid JSON on line ${totalLines}. Aborting to prevent incorrect deletions.`
+      );
+    }
+
+    if (product?.id !== undefined && product?.id !== null) {
+      shopifyIds.add(String(product.id));
+    }
+  }
+
+  if (shopifyIds.size === 0) {
+    throw new Error(
+      "No Shopify product IDs found. Aborting to prevent incorrect deletions."
+    );
+  }
+
+  console.log(`📦 Shopify products found: ${shopifyIds.size}`);
+
+  return shopifyIds;
+}
+
+
+// ---------------------------------------------------------
+// MARK PRODUCTS DELETED FROM SHOPIFY
+// ---------------------------------------------------------
+
+
+async function markDeletedProducts(shopifyIds) {
+  console.log("🔎 Fetching product IDs from OpenSearch...");
+
+  const openSearchIds = new Set();
+  let scrollId = null;
+
+  try {
+    let response = await openSearchClient.search({
+      index: INDEX_NAME,
+      scroll: "2m",
+      size: 5000,
+      _source: false,
+      body: {
+        query: {
+          match_all: {},
+        },
+      },
+    });
+
+    let result = response.body ?? response;
+
+    scrollId = result._scroll_id;
+
+    while (true) {
+      const hits = result.hits?.hits || [];
+
+      if (!hits.length) break;
+
+      for (const hit of hits) {
+        openSearchIds.add(String(hit._id));
+      }
+
+      console.log(
+        `📦 Fetched ${openSearchIds.size} OpenSearch product IDs`
+      );
+
+      response = await openSearchClient.scroll({
+        scroll_id: scrollId,
+        scroll: "2m",
+      });
+
+      result = response.body ?? response;
+      scrollId = result._scroll_id || scrollId;
+    }
+  } finally {
+    if (scrollId) {
+      try {
+        await openSearchClient.clearScroll({
+          scroll_id: scrollId,
+        });
+      } catch (error) {
+        console.warn("⚠️ Could not clear OpenSearch scroll:", error.message);
+      }
+    }
+  }
+
+  console.log(`📦 Total OpenSearch products: ${openSearchIds.size}`);
+
+  const deletedIds = [];
+
+  for (const id of openSearchIds) {
+    if (!shopifyIds.has(id)) {
+      deletedIds.push(id);
+    }
+  }
+
+  console.log(`🗑️ Products missing from Shopify: ${deletedIds.length}`);
+
+
+  if(deletedIds.length > 500){
+    console.log("Deletion failed becaues the limit reached")
+    return 
+  }
+
+  console.log(`🗑️ Products missing from Shopify: ${deletedIds.length}`);
+
+  let updated = 0;
+  const DELETE_BATCH_SIZE = 500;
+
+  for (let i = 0; i < deletedIds.length; i += DELETE_BATCH_SIZE) {
+    const batch = deletedIds.slice(i, i + DELETE_BATCH_SIZE);
+    const body = [];
+
+    for (const id of batch) {
+      body.push({
+        update: {
+          _index: INDEX_NAME,
+          _id: id,
+        },
+      });
+
+      body.push({
+        doc: {
+          status: "DELETED",
+        },
+      });
+    }
+
+    const response = await openSearchClient.bulk({
+      body,
+      refresh: false,
+    });
+
+    const bulkResult = response.body ?? response;
+
+    if (bulkResult.errors) {
+      const failures = (bulkResult.items || [])
+        .filter((item) => item.update?.error)
+        .map((item) => ({
+          id: item.update._id,
+          status: item.update.status,
+          error: item.update.error,
+        }));
+
+      console.error(
+        "❌ Failed status updates:",
+        failures.slice(0, 10)
+      );
+
+      throw new Error(
+        `${failures.length} products failed to update to DELETED.`
+      );
+    }
+
+    updated += batch.length;
+
+    console.log(
+      `🗑️ Marked ${updated}/${deletedIds.length} products as DELETED`
+    );
+  }
+
+  console.log(`✅ Marked ${updated} products as DELETED.`);
+}
+
+
 async function bulkUpsert(products) {
   if (!products.length) {
     return;
@@ -88,6 +283,22 @@ async function bulkUpsert(products) {
 // ---------------------------------------------------------
 
 async function importProducts() {
+
+
+
+  try {
+    console.log("🚀 Starting deleted propducts sync");
+    const shopifyIds = await getShopifyProductIds();
+    await markDeletedProducts(shopifyIds);
+
+  } catch (error) {
+
+    console.error(
+      "⚠️ Failed to mark deleted products. Continuing import..."
+    );
+    console.error(error.message);
+  }
+
   console.log("🚀 Starting Shopify → OpenSearch product import");
 
   console.log(`📄 Input file: ${INPUT_FILE}`);
