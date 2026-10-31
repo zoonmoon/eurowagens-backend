@@ -242,6 +242,12 @@ if (
 
     const result = await saveFilterSettings(settings);
 
+    console.log("triggering bulk operation again after saving filter settings")
+
+    fetch(
+      `${process.env.SERVER_BASE_URL}/initiate-bulk-operation`
+    );
+
     return sendJson(res, 200, result);
   } catch (err) {
     console.error("Failed to save filter settings:", err);
