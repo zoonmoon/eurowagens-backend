@@ -99,7 +99,7 @@ async function syncFitmentData() {
     console.log("Google Drive sync completed.");
     console.log("Importing fitment data into OpenSearch...");
 
-    await execFileAsync(
+    const { stdout, stderr } = await execFileAsync(
       "/usr/bin/node",
       [
         "fitment-data-and-products-sync-to-os/fitment-sync/from-server-file-to-database/index.js",
@@ -111,7 +111,9 @@ async function syncFitmentData() {
 
       }
     );
-
+    
+    console.log(stdout);
+    console.error(stderr);
     console.log("Fitment sync completed successfully.");
 
     return { success: true };

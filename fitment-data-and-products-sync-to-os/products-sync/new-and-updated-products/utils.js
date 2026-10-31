@@ -1,15 +1,33 @@
 
-// Only these Shopify metafields are imported into custom_fields
-const INCLUDED_METAFIELDS = {
-  "part_category": "Part Category" ,
-  "product_group":  "Part Type",
-  // "traffic_side": "Traffic Side",
-  "motorcycle_collection": "Motorcycle Collection", 
-  "motorcycle_part_type": "Motorcycle Part Type",
-  "fitting_position": "Fitting Position",
-}
+import fs from "node:fs";
+import path from "node:path";
+
+const DEFAULT_INCLUDED_METAFIELDS = {
+  part_category: "Part Category",
+  product_group: "Part Type",
+  motorcycle_collection: "Motorcycle Collection",
+  motorcycle_part_type: "Motorcycle Part Type",
+  fitting_position: "Fitting Position",
+};
+
+const settings = JSON.parse(
+  fs.readFileSync(
+    path.join(process.cwd(), "filter-settings.json"),
+    "utf8"
+  )
+);
+
+const configuredMetafields = settings.included_metafields || {};
 
 
+const INCLUDED_METAFIELDS =
+  Object.keys(configuredMetafields).length > 0
+    ? Object.fromEntries(
+        Object.entries(configuredMetafields).map(
+          ([key, config]) => [key, config.label]
+        )
+      )
+    : DEFAULT_INCLUDED_METAFIELDS;
 
 
 function isEmptyValue(value) {

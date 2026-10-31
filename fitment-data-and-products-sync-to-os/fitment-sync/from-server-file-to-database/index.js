@@ -675,38 +675,158 @@ async function deleteMissingFitments() {
 
 /* -------------------- MAIN SYNC -------------------- */
 
-async function syncFitmentData() {
+// async function syncFitmentData() {
+//   let sourceIndexCreated = false;
+
+//   const stats = {
+//     totalRows: 0,
+//     rejectedRows: 0,
+//     sourceRows: 0,
+//     upsertedRows: 0,
+//   };
+
+//   try {
+//     console.log("");
+//     console.log("🚀 Starting fitment reconciliation");
+//     console.log(`📁 Directory: ${FITMENT_DIR}`);
+//     console.log(`🎯 Target index: ${INDEX_NAME}`);
+
+//     if (!fs.existsSync(FITMENT_DIR)) {
+//       throw new Error(`Directory does not exist: ${FITMENT_DIR}`);
+//     }
+
+//     const files = fs
+//       .readdirSync(FITMENT_DIR)
+//       .filter((file) => file.toLowerCase().endsWith(".csv"))
+//       .sort();
+
+//     if (!files.length) {
+//       throw new Error("No CSV files found. Refusing to delete fitments.");
+//     }
+
+//     console.log(`📁 Found ${files.length} CSV files`);
+
+//     console.log("");
+//     console.log(`🛠️ Creating temporary index: ${SOURCE_INDEX}`);
+
+//     await openSearchClient.indices.create({
+//       index: SOURCE_INDEX,
+//       body: {
+//         mappings: {
+//           properties: {
+//             source: { type: "boolean" },
+//           },
+//         },
+//       },
+//     });
+
+//     sourceIndexCreated = true;
+
+//     // PHASE 1: Build the combined source-ID set.
+//     console.log("");
+//     console.log("========== PHASE 1: BUILD SOURCE IDS ==========");
+
+//     for (let i = 0; i < files.length; i++) {
+//       console.log(`📁 Source file ${i + 1}/${files.length}`);
+
+//       await processFile(
+//         path.join(FITMENT_DIR, files[i]),
+//         "source",
+//         stats
+//       );
+//     }
+
+//     await withRetry(
+//       () => openSearchClient.indices.refresh({ index: SOURCE_INDEX }),
+//       "Refresh temporary source index"
+//     );
+
+//     const sourceCount = await getIndexCount(SOURCE_INDEX);
+
+//     console.log("");
+//     console.log("========== SOURCE INDEX SUMMARY ==========");
+//     console.log(`CSV files: ${files.length}`);
+//     console.log(`Valid source rows processed: ${stats.sourceRows.toLocaleString()}`);
+//     console.log(`Unique source IDs: ${sourceCount.toLocaleString()}`);
+//     console.log(`Rejected rows: ${stats.rejectedRows.toLocaleString()}`);
+//     console.log("==========================================");
+
+//     if (sourceCount < 1) {
+//       throw new Error(
+//         "Source index is empty. Refusing to delete existing fitments."
+//       );
+//     }
+
+//     if (ABORT_ON_REJECTED_ROWS && stats.rejectedRows > 0) {
+//       throw new Error("Invalid rows detected. Aborting before deletion.");
+//     }
+
+//     // PHASE 2: Count obsolete IDs and delete them before upserting.
+//     const deleted = await deleteMissingFitments();
+
+//     // PHASE 3: Upsert all valid CSV rows.
+//     console.log("");
+//     console.log("========== PHASE 3: UPSERT FITMENTS ==========");
+
+//     for (let i = 0; i < files.length; i++) {
+//       console.log(`📁 Upsert file ${i + 1}/${files.length}`);
+
+//       await processFile(
+//         path.join(FITMENT_DIR, files[i]),
+//         "upsert",
+//         stats
+//       );
+//     }
+
+//     await withRetry(
+//       () => openSearchClient.indices.refresh({ index: INDEX_NAME }),
+//       "Refresh fitment index"
+//     );
+
+//     const finalCount = await getIndexCount(INDEX_NAME);
+
+//     console.log("");
+//     console.log("==========================================");
+//     console.log("🎉 FITMENT RECONCILIATION COMPLETE");
+//     console.log("==========================================");
+//     console.log(`Files processed: ${files.length}`);
+//     console.log(`Unique source IDs: ${sourceCount.toLocaleString()}`);
+//     console.log(`Deleted documents: ${deleted.toLocaleString()}`);
+//     console.log(`Upserted rows: ${stats.upsertedRows.toLocaleString()}`);
+//     console.log(`Final target count: ${finalCount.toLocaleString()}`);
+//     console.log("==========================================");
+//   } finally {
+//     if (sourceIndexCreated) {
+//       console.log("");
+//       console.log(`🧹 Deleting temporary index: ${SOURCE_INDEX}`);
+
+//       try {
+//         await openSearchClient.indices.delete({
+//           index: SOURCE_INDEX,
+//         });
+
+//         console.log("✅ Temporary source index deleted");
+//       } catch (error) {
+//         console.error(
+//           "⚠️ Could not delete temporary index:",
+//           error?.message || error
+//         );
+//       }
+//     }
+//   }
+// }
+
+
+
+async function deleteFitmentData(files, stats) {
+
+
+  // console.log("cancelling deletion")
+  // return 
+
   let sourceIndexCreated = false;
 
-  const stats = {
-    totalRows: 0,
-    rejectedRows: 0,
-    sourceRows: 0,
-    upsertedRows: 0,
-  };
-
   try {
-    console.log("");
-    console.log("🚀 Starting fitment reconciliation");
-    console.log(`📁 Directory: ${FITMENT_DIR}`);
-    console.log(`🎯 Target index: ${INDEX_NAME}`);
-
-    if (!fs.existsSync(FITMENT_DIR)) {
-      throw new Error(`Directory does not exist: ${FITMENT_DIR}`);
-    }
-
-    const files = fs
-      .readdirSync(FITMENT_DIR)
-      .filter((file) => file.toLowerCase().endsWith(".csv"))
-      .sort();
-
-    if (!files.length) {
-      throw new Error("No CSV files found. Refusing to delete fitments.");
-    }
-
-    console.log(`📁 Found ${files.length} CSV files`);
-
-    console.log("");
     console.log(`🛠️ Creating temporary index: ${SOURCE_INDEX}`);
 
     await openSearchClient.indices.create({
@@ -722,15 +842,13 @@ async function syncFitmentData() {
 
     sourceIndexCreated = true;
 
-    // PHASE 1: Build the combined source-ID set.
-    console.log("");
     console.log("========== PHASE 1: BUILD SOURCE IDS ==========");
 
     for (let i = 0; i < files.length; i++) {
       console.log(`📁 Source file ${i + 1}/${files.length}`);
 
       await processFile(
-        path.join(FITMENT_DIR, files[i]),
+        path.join(FITMENT_DIR, files[i].file),
         "source",
         stats
       );
@@ -743,61 +861,22 @@ async function syncFitmentData() {
 
     const sourceCount = await getIndexCount(SOURCE_INDEX);
 
-    console.log("");
-    console.log("========== SOURCE INDEX SUMMARY ==========");
-    console.log(`CSV files: ${files.length}`);
-    console.log(`Valid source rows processed: ${stats.sourceRows.toLocaleString()}`);
     console.log(`Unique source IDs: ${sourceCount.toLocaleString()}`);
     console.log(`Rejected rows: ${stats.rejectedRows.toLocaleString()}`);
-    console.log("==========================================");
 
     if (sourceCount < 1) {
-      throw new Error(
-        "Source index is empty. Refusing to delete existing fitments."
-      );
+      throw new Error("Source index is empty. Refusing to delete fitments.");
     }
 
     if (ABORT_ON_REJECTED_ROWS && stats.rejectedRows > 0) {
-      throw new Error("Invalid rows detected. Aborting before deletion.");
+      throw new Error("Invalid rows detected. Aborting deletion.");
     }
 
-    // PHASE 2: Count obsolete IDs and delete them before upserting.
-    const deleted = await deleteMissingFitments();
+    console.log("========== PHASE 2: DELETE OBSOLETE FITMENTS ==========");
 
-    // PHASE 3: Upsert all valid CSV rows.
-    console.log("");
-    console.log("========== PHASE 3: UPSERT FITMENTS ==========");
-
-    for (let i = 0; i < files.length; i++) {
-      console.log(`📁 Upsert file ${i + 1}/${files.length}`);
-
-      await processFile(
-        path.join(FITMENT_DIR, files[i]),
-        "upsert",
-        stats
-      );
-    }
-
-    await withRetry(
-      () => openSearchClient.indices.refresh({ index: INDEX_NAME }),
-      "Refresh fitment index"
-    );
-
-    const finalCount = await getIndexCount(INDEX_NAME);
-
-    console.log("");
-    console.log("==========================================");
-    console.log("🎉 FITMENT RECONCILIATION COMPLETE");
-    console.log("==========================================");
-    console.log(`Files processed: ${files.length}`);
-    console.log(`Unique source IDs: ${sourceCount.toLocaleString()}`);
-    console.log(`Deleted documents: ${deleted.toLocaleString()}`);
-    console.log(`Upserted rows: ${stats.upsertedRows.toLocaleString()}`);
-    console.log(`Final target count: ${finalCount.toLocaleString()}`);
-    console.log("==========================================");
+    return await deleteMissingFitments();
   } finally {
     if (sourceIndexCreated) {
-      console.log("");
       console.log(`🧹 Deleting temporary index: ${SOURCE_INDEX}`);
 
       try {
@@ -816,6 +895,98 @@ async function syncFitmentData() {
   }
 }
 
+async function upsertFitmentData(files, stats) {
+  console.log("========== PHASE 3: UPSERT FITMENTS ==========");
+
+  for (let i = 0; i < files.length; i++) {
+
+    console.log(
+      `📁 Upsert file ${i + 1}/${files.length}: ${files[i].file}`
+    );
+
+    await processFile(
+      path.join(FITMENT_DIR, files[i].file),
+      "upsert",
+      stats
+    );
+  }
+
+  await withRetry(
+    () => openSearchClient.indices.refresh({ index: INDEX_NAME }),
+    "Refresh fitment index"
+  );
+
+  return await getIndexCount(INDEX_NAME);
+}
+
+async function syncFitmentData() {
+  const stats = {
+    totalRows: 0,
+    rejectedRows: 0,
+    sourceRows: 0,
+    upsertedRows: 0,
+  };
+
+  let deleted = null;
+  let finalCount = null;
+
+  console.log("🚀 Starting fitment reconciliation");
+  console.log(`📁 Directory: ${FITMENT_DIR}`);
+  console.log(`🎯 Target index: ${INDEX_NAME}`);
+
+  if (!fs.existsSync(FITMENT_DIR)) {
+    throw new Error(`Directory does not exist: ${FITMENT_DIR}`);
+  }
+
+
+  const files = fs
+    .readdirSync(FITMENT_DIR)
+    .filter((file) => file.toLowerCase().endsWith(".csv"))
+    .map((file) => ({
+      file,
+      modifiedAt: fs.statSync(path.join(FITMENT_DIR, file)).mtime,
+    }))
+    .sort((a, b) => b.modifiedAt - a.modifiedAt);
+
+  console.log(
+    files.map(({ file, modifiedAt }) => ({
+      file,
+      modified: modifiedAt,
+    }))
+  );
+
+   
+
+  if (!files.length) {
+    throw new Error("No CSV files found. Refusing to delete fitments.");
+  }
+
+  console.log(`📁 Found ${files.length} CSV files`);
+  
+  try {
+    deleted = await deleteFitmentData(files, stats);
+    console.log(`✅ Deleted documents: ${deleted.toLocaleString()}`);
+  } catch (error) {
+    console.error("⚠️ Fitment deletion failed:", error?.message || error);
+  }
+
+  try {
+    finalCount = await upsertFitmentData(files, stats);
+    console.log("✅ Fitment upsert completed");
+  } catch (error) {
+    console.error("⚠️ Fitment upsert failed:", error?.message || error);
+  }
+
+  console.log("");
+  console.log("==========================================");
+  console.log("🎉 FITMENT RECONCILIATION FINISHED");
+  console.log("==========================================");
+  console.log(`Files processed: ${files.length}`);
+  console.log(`Deleted documents: ${deleted ?? "Failed"}`);
+  console.log(`Upserted rows: ${stats.upsertedRows.toLocaleString()}`);
+  console.log(`Final target count: ${finalCount ?? "Unavailable"}`);
+  console.log("==========================================");
+}
 
 syncFitmentData()
   .catch((error) => {

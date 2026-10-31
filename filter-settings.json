@@ -1,0 +1,28 @@
+{
+  "included_metafields": {
+    "part_category": {
+      "label": "Part Category",
+      "sort_order": 1
+    },
+    "product_group": {
+      "label": "Part Type",
+      "sort_order": 2
+    },
+    "traffic_side": {
+      "label": "Traffic Side",
+      "sort_order": 3
+    },
+    "motorcycle_collection": {
+      "label": "Motorcycle Collection",
+      "sort_order": 4
+    },
+    "motorcycle_part_type": {
+      "label": "Motorcycle Part Type",
+      "sort_order": 5
+    },
+    "fitting_position": {
+      "label": "Fitting Position",
+      "sort_order": 6
+    }
+  }
+}
