@@ -27,6 +27,9 @@ const MAX_JOB_DURATION = 2 * 24 * 60 * 60 * 1000; // 48 hours
 
 global.isBulkOperationRunning ??= false;
 global.bulkOperationStartedAt ??= null;
+global.isBulkOperationQueued ??= false;
+
+
 
 global.isFitmentSyncRunning ??= false;
 global.fitmentSyncStartedAt ??= null;
@@ -54,9 +57,37 @@ function resetStaleLock(lockName, startedAtName) {
   return false;
 }
 
+// function releaseBulkOperationLock() {
+//   global.isBulkOperationRunning = false;
+//   global.bulkOperationStartedAt = null;
+// }
+
+
 function releaseBulkOperationLock() {
   global.isBulkOperationRunning = false;
   global.bulkOperationStartedAt = null;
+
+  if (global.isBulkOperationQueued) {
+    console.log("Queued bulk operation found. Restarting...");
+
+    global.isBulkOperationQueued = false;
+
+    setImmediate(async () => {
+      try {
+        const response = await fetch(
+          `${process.env.SERVER_BASE_URL}/initiate-bulk-operation`
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        console.log("Queued bulk operation started.");
+      } catch (err) {
+        console.error("Failed to restart queued bulk operation:", err);
+      }
+    });
+  }
 }
 
 // --------------------------------------------------
@@ -482,14 +513,28 @@ if (
       "bulkOperationStartedAt"
     );
 
+    // if (global.isBulkOperationRunning) {
+    //   console.log("Skipping: bulk operation already running.");
+
+    //   return sendJson(res, 200, {
+    //     skipped: true,
+    //     message: "Bulk operation already running, skipped.",
+    //   });
+    // }
+
+
     if (global.isBulkOperationRunning) {
-      console.log("Skipping: bulk operation already running.");
+      console.log("Bulk operation already running. Adding to queue.");
+
+      global.isBulkOperationQueued = true;
 
       return sendJson(res, 200, {
-        skipped: true,
-        message: "Bulk operation already running, skipped.",
+        success: true,
+        queued: true,
+        message: "Bulk operation is already running. Another run has been queued.",
       });
     }
+
 
     // Acquire the lock before asynchronous work begins.
     global.isBulkOperationRunning = true;
@@ -728,7 +773,7 @@ server.listen(PORT, "0.0.0.0", () => {
       console.log("Skipping: bulk operation already running.");
       return;
     }
-
+    
     try {
       const response = await fetch(
         process.env.SERVER_BASE_URL +
