@@ -15,6 +15,8 @@ import { retainRecent15FilesOnly } from "./utils/retain_recent_15_only.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { getFilterSettings, saveFilterSettings, getJustSavedSettings } from "./utils/filter-settings.js";
+
 const execFileAsync = promisify(execFile);
 
 // --------------------------------------------------
@@ -138,6 +140,17 @@ function sendJson(res, statusCode, data) {
   res.end(JSON.stringify(data));
 }
 
+
+async function parseJsonBody(req) {
+  let body = "";
+
+  for await (const chunk of req) {
+    body += chunk;
+  }
+
+  return JSON.parse(body);
+}
+
 function fireAndForget(url, failMessage, sub_operation) {
   fetch(url)
     .then((response) => {
@@ -167,10 +180,121 @@ const server = http.createServer(async (req, res) => {
   const parsedUrl = parse(req.url, true);
   const pathname = parsedUrl.pathname;
 
+
+
+
+
+
+// -----------------------------------------------
+// POST /save-filter-settings
+// -----------------------------------------------
+
+if (
+  method === "POST" &&
+  pathname === "/save-filter-settings"
+) {
+  try {
+    const settings = await parseJsonBody(req);
+
+    if (
+      !settings ||
+      typeof settings !== "object" ||
+      !settings.included_metafields ||
+      typeof settings.included_metafields !== "object" ||
+      Array.isArray(settings.included_metafields)
+    ) {
+      return sendJson(res, 400, {
+        success: false,
+        message: "Invalid filter settings structure.",
+      });
+    }
+
+    const result = await saveFilterSettings(settings);
+
+    return sendJson(res, 200, result);
+  } catch (err) {
+    console.error("Failed to save filter settings:", err);
+
+    return sendJson(
+      res,
+      err instanceof SyntaxError ? 400 : 500,
+      {
+        success: false,
+        message:
+          err instanceof SyntaxError
+            ? "Invalid JSON request body."
+            : "Failed to save filter settings.",
+        error: err.message,
+      }
+    );
+  }
+}
+
+
+// -----------------------------------------------
+// GET /get-filter-settings
+// -----------------------------------------------
+
+if (
+  method === "GET" &&
+  pathname === "/get-filter-settings"
+) {
+  try {
+    const settings = await getFilterSettings();
+
+    return sendJson(res, 200, {
+      success: true,
+      data: settings,
+    });
+  } catch (err) {
+    console.error("Failed to get filter settings:", err);
+
+    return sendJson(res, 500, {
+      success: false,
+      message: "Failed to retrieve filter settings.",
+      error: err.message,
+    });
+  }
+}
+
+
+
+
+
+// -----------------------------------------------
+// GET /get-just-saved-settings
+// -----------------------------------------------
+
+if (
+  method === "GET" &&
+  pathname === "/get-just-saved-settings"
+) {
+  try {
+    const settings = await getJustSavedSettings();
+
+    return sendJson(res, 200, {
+      success: true,
+      data: settings,
+    });
+  } catch (err) {
+    console.error("Failed to get saved filter settings:", err);
+
+    return sendJson(res, 500, {
+      success: false,
+      message: "Failed to retrieve saved filter settings.",
+      error: err.message,
+    });
+  }
+}
+
+
+
+
   // -----------------------------------------------
   // GET /download-updates-log
   // -----------------------------------------------
 
+  
   if (
     method === "GET" &&
     pathname.includes("download-updates-log")

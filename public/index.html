@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>Tag Validator</title>
+  <meta charset="UTF-8">
   <style>
     body {
       font-family: Arial;
@@ -94,6 +95,44 @@
 
   <div class="status" id="statusText"></div>
 </div>
+
+
+<!-- PRODUCT FILTER CONFIGURATION -->
+<div class="section">
+  <h2>Product Filters Configuration</h2>
+
+  <div id="filters-container"></div>
+
+  <button id="add-filter-btn" type="button">
+    + Add Filter
+  </button>
+
+  <button id="save-filters-btn" type="button" disabled>
+    Save Changes
+  </button>
+
+  <div class="status" id="filter-settings-status"></div>
+</div>
+
+<!-- ADD FILTER POPUP -->
+<dialog id="add-filter-dialog">
+  <h3>Add Product Filter</h3>
+
+  <select id="available-filters-select">
+    <option value="">Select a metafield</option>
+  </select>
+
+  <div style="margin-top: 20px;">
+    <button id="confirm-add-filter-btn" type="button">
+      Add Filter
+    </button>
+
+    <button id="close-filter-dialog-btn" type="button">
+      Cancel
+    </button>
+  </div>
+</dialog>
+
 
 <!-- 🟢 RECENT RUNS SECTION -->
 <div class="section">
@@ -297,6 +336,482 @@ viewAllBtn.onclick = async () => {
 
 </script>
 
+
+
+<!-- for filters -->
+
+<script>
+const filtersContainer = document.getElementById(
+  "filters-container"
+);
+
+const addFilterBtn = document.getElementById(
+  "add-filter-btn"
+);
+
+const saveFiltersBtn = document.getElementById(
+  "save-filters-btn"
+);
+
+const filterSettingsStatus = document.getElementById(
+  "filter-settings-status"
+);
+
+const addFilterDialog = document.getElementById(
+  "add-filter-dialog"
+);
+
+const availableFiltersSelect = document.getElementById(
+  "available-filters-select"
+);
+
+const confirmAddFilterBtn = document.getElementById(
+  "confirm-add-filter-btn"
+);
+
+const closeFilterDialogBtn = document.getElementById(
+  "close-filter-dialog-btn"
+);
+
+let selectedFilters = [];
+let allAvailableFilters = [];
+
+let originalSettings = "";
+
+// --------------------------------------------------
+// HELPERS
+// --------------------------------------------------
+
+function normalizeSortOrder() {
+  selectedFilters.forEach((filter, index) => {
+    filter.sort_order = index + 1;
+  });
+}
+
+function getSettingsPayload() {
+  const includedMetafields = {};
+
+  selectedFilters.forEach((filter) => {
+    includedMetafields[filter.key] = {
+      label: filter.label,
+      sort_order: filter.sort_order,
+    };
+  });
+
+  return {
+    included_metafields: includedMetafields,
+  };
+}
+
+function hasChanges() {
+  return (
+    JSON.stringify(getSettingsPayload()) !== originalSettings
+  );
+}
+
+function updateSaveButton() {
+  saveFiltersBtn.disabled = !hasChanges();
+}
+
+// --------------------------------------------------
+// RENDER SELECTED FILTERS
+// --------------------------------------------------
+
+function renderFilters() {
+  filtersContainer.innerHTML = "";
+
+  selectedFilters.forEach((filter, index) => {
+    const item = document.createElement("div");
+    item.className = "filter-item";
+
+    const label = document.createElement("div");
+    label.className = "filter-label";
+    label.textContent = filter.label;
+
+    const order = document.createElement("input");
+    order.type = "number";
+    order.className = "filter-order";
+    order.min = 1;
+    order.max = selectedFilters.length;
+    order.value = filter.sort_order;
+    order.title = "Sort order";
+
+    // Update sort order manually.
+    order.addEventListener("change", () => {
+      const newOrder = Number(order.value);
+
+      if (
+        !Number.isInteger(newOrder) ||
+        newOrder < 1 ||
+        newOrder > selectedFilters.length
+      ) {
+        order.value = filter.sort_order;
+        return;
+      }
+
+      const oldIndex = index;
+      const newIndex = newOrder - 1;
+
+      const [movedFilter] = selectedFilters.splice(
+        oldIndex,
+        1
+      );
+
+      selectedFilters.splice(
+        newIndex,
+        0,
+        movedFilter
+      );
+
+      normalizeSortOrder();
+      renderFilters();
+      updateSaveButton();
+    });
+
+    // Move filter up.
+    const upBtn = document.createElement("button");
+    upBtn.type = "button";
+    upBtn.className = "sort-filter-btn";
+    upBtn.textContent = "↑";
+    upBtn.disabled = index === 0;
+
+    upBtn.onclick = () => {
+      [
+        selectedFilters[index - 1],
+        selectedFilters[index],
+      ] = [
+        selectedFilters[index],
+        selectedFilters[index - 1],
+      ];
+
+      normalizeSortOrder();
+      renderFilters();
+      updateSaveButton();
+    };
+
+    // Move filter down.
+    const downBtn = document.createElement("button");
+    downBtn.type = "button";
+    downBtn.className = "sort-filter-btn";
+    downBtn.textContent = "↓";
+    downBtn.disabled = index === selectedFilters.length - 1;
+
+    downBtn.onclick = () => {
+      [
+        selectedFilters[index],
+        selectedFilters[index + 1],
+      ] = [
+        selectedFilters[index + 1],
+        selectedFilters[index],
+      ];
+
+      normalizeSortOrder();
+      renderFilters();
+      updateSaveButton();
+    };
+
+    // Remove filter.
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "remove-filter-btn";
+    removeBtn.textContent = "Remove";
+
+    removeBtn.disabled = selectedFilters.length === 1;
+
+    removeBtn.onclick = () => {
+      if (selectedFilters.length <= 1) return;
+
+      selectedFilters.splice(index, 1);
+
+      normalizeSortOrder();
+      renderFilters();
+      updateSaveButton();
+    };
+
+    item.append(
+      label,
+      order,
+      upBtn,
+      downBtn,
+      removeBtn
+    );
+
+    filtersContainer.appendChild(item);
+  });
+
+  // Prevent adding an unlimited number of filters.
+  addFilterBtn.disabled =
+    selectedFilters.length >= allAvailableFilters.length;
+
+  updateAvailableFilters();
+}
+
+// --------------------------------------------------
+// UPDATE AVAILABLE FILTERS
+// --------------------------------------------------
+
+function updateAvailableFilters() {
+  availableFiltersSelect.innerHTML = "";
+
+  const selectedKeys = new Set(
+    selectedFilters.map((filter) => filter.key)
+  );
+
+  // const available = allAvailableFilters.filter(
+  //   (filter) => !selectedKeys.has(filter.key)
+  // );
+
+
+const available = allAvailableFilters
+  .filter((filter) => !selectedKeys.has(filter.key))
+  .sort((a, b) =>
+    a.label.localeCompare(b.label, undefined, {
+      sensitivity: "base",
+    })
+  );
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select a metafield";
+
+  availableFiltersSelect.appendChild(placeholder);
+
+  available.forEach((filter) => {
+    const option = document.createElement("option");
+
+    option.value = filter.key;
+    option.textContent = filter.label;
+
+    availableFiltersSelect.appendChild(option);
+  });
+
+  confirmAddFilterBtn.disabled = available.length === 0;
+}
+
+// --------------------------------------------------
+// LOAD FILTER SETTINGS
+// --------------------------------------------------
+
+async function loadFilterSettings() {
+  try {
+    filterSettingsStatus.textContent =
+      "Loading filter settings...";
+
+    const response = await fetch("/get-filter-settings");
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(
+        result.message || "Failed to load filter settings."
+      );
+    }
+
+    selectedFilters = result.data.selected_filters || [];
+
+    allAvailableFilters =
+      result.data.all_available_filters || [];
+
+    selectedFilters.sort(
+      (a, b) => a.sort_order - b.sort_order
+    );
+
+    normalizeSortOrder();
+
+    originalSettings = JSON.stringify(
+      getSettingsPayload()
+    );
+
+    renderFilters();
+
+    filterSettingsStatus.textContent = "";
+  } catch (error) {
+    console.error(error);
+
+    filterSettingsStatus.textContent =
+      `Error: ${error.message}`;
+  }
+}
+
+// --------------------------------------------------
+// OPEN ADD FILTER POPUP
+// --------------------------------------------------
+
+addFilterBtn.onclick = () => {
+  updateAvailableFilters();
+  addFilterDialog.showModal();
+};
+
+closeFilterDialogBtn.onclick = () => {
+  addFilterDialog.close();
+};
+
+// --------------------------------------------------
+// ADD FILTER
+// --------------------------------------------------
+
+confirmAddFilterBtn.onclick = () => {
+  const selectedKey = availableFiltersSelect.value;
+
+  if (!selectedKey) return;
+
+  const filter = allAvailableFilters.find(
+    (item) => item.key === selectedKey
+  );
+
+  if (!filter) return;
+
+  // Prevent duplicate filters.
+  if (
+    selectedFilters.some(
+      (item) => item.key === selectedKey
+    )
+  ) {
+    return;
+  }
+
+  selectedFilters.push({
+    key: filter.key,
+    label: filter.label,
+    sort_order: selectedFilters.length + 1,
+  });
+
+  normalizeSortOrder();
+
+  renderFilters();
+  updateSaveButton();
+
+  addFilterDialog.close();
+};
+
+// --------------------------------------------------
+// SAVE FILTER SETTINGS
+// --------------------------------------------------
+
+saveFiltersBtn.onclick = async () => {
+  try {
+    saveFiltersBtn.disabled = true;
+
+    filterSettingsStatus.textContent =
+      "Saving filter settings...";
+
+    const response = await fetch("/save-filter-settings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(getSettingsPayload()),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(
+        result.message || "Failed to save filter settings."
+      );
+    }
+
+    originalSettings = JSON.stringify(
+      getSettingsPayload()
+    );
+
+    filterSettingsStatus.textContent =
+      "Filter settings saved successfully.";
+
+  } catch (error) {
+    console.error(error);
+
+    filterSettingsStatus.textContent =
+      `Error: ${error.message}`;
+  } finally {
+    updateSaveButton();
+  }
+};
+
+// --------------------------------------------------
+// INITIALIZE
+// --------------------------------------------------
+
+loadFilterSettings();
+</script>
+
+<!-- filters styling -->
+
+<style>
+
+
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #1e293b;
+  padding: 14px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.filter-label {
+  flex: 1;
+  font-weight: bold;
+}
+
+.filter-order {
+  width: 75px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: white;
+}
+
+.filter-item button {
+  padding: 8px 12px;
+  margin: 0;
+}
+
+.remove-filter-btn {
+  background: #dc2626;
+}
+
+.sort-filter-btn {
+  background: #475569;
+}
+
+#add-filter-dialog {
+  background: #1e293b;
+  color: white;
+  border: 1px solid #475569;
+  border-radius: 12px;
+  padding: 25px;
+  min-width: 320px;
+}
+
+#add-filter-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+#available-filters-select {
+  width: 100%;
+  padding: 12px;
+  background: #0f172a;
+  color: white;
+  border: 1px solid #475569;
+  border-radius: 6px;
+}
+
+#save-filters-btn {
+  background: #16a34a;
+}
+
+#save-filters-btn:disabled {
+  background: #475569;
+}
+
+.filter-order {
+  display: none;
+}
+
+</style>
 
 </body>
 </html>
